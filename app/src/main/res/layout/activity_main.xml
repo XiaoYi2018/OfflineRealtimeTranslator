@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="#FF121212"
+    tools:context=".MainActivity">
+
+    <!-- Status bar -->
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:textSize="13sp"
+        android:textColor="#FFAAAAAA"
+        android:background="#FF1E1E1E"
+        android:text="@string/status_loading"
+        android:fontFamily="monospace"
+        android:maxLines="3" />
+
+    <!-- Start/Stop button -->
+    <Button
+        android:id="@+id/btn_start_stop"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="8dp"
+        android:text="@string/btn_start"
+        android:enabled="false"
+        android:textSize="16sp"
+        style="@style/Widget.MaterialComponents.Button" />
+
+    <!-- Russian ASR section label -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/label_russian"
+        android:textSize="11sp"
+        android:textColor="#FF888888"
+        android:textAllCaps="true"
+        android:letterSpacing="0.1" />
+
+    <!-- Russian recognition history (append-only, scrollable) -->
+    <ScrollView
+        android:id="@+id/scroll_view_russian"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="4dp"
+        android:fillViewport="true">
+        <TextView
+            android:id="@+id/tv_russian_history"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:textSize="17sp"
+            android:textColor="#FFDDEEFF"
+            android:background="#FF1A2030"
+            android:gravity="top"
+            android:hint="@string/hint_russian"
+            android:textColorHint="#FF446688"
+            tools:text="Привет мир" />
+    </ScrollView>
+
+    <!-- Divider -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="4dp"
+        android:background="#FF333333" />
+
+    <!-- Chinese translation section label -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/label_chinese"
+        android:textSize="11sp"
+        android:textColor="#FF888888"
+        android:textAllCaps="true"
+        android:letterSpacing="0.1" />
+
+    <!-- Chinese translation history (append-only, scrollable) -->
+    <ScrollView
+        android:id="@+id/scroll_view_chinese"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="4dp"
+        android:fillViewport="true">
+
+        <TextView
+            android:id="@+id/tv_chinese_history"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:textSize="17sp"
+            android:textColor="#FFFFEECC"
+            android:background="#FF201A10"
+            android:gravity="top"
+            android:hint="@string/hint_chinese"
+            android:textColorHint="#FF886633"
+            tools:text="你好世界" />
+    </ScrollView>
+
+</LinearLayout>

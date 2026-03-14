@@ -1,0 +1,19 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# App build output
+app/build/
+
+# Model files (too large for git)
+*.onnx
+*.bin
+*.bpe
+vocab.txt

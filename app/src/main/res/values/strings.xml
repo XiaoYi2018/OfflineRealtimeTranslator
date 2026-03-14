@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">RU-ZH 实时同传</string>
+    <string name="status_loading">正在加载模型...</string>
+    <string name="status_ready">就绪</string>
+    <string name="status_listening">正在监听</string>
+    <string name="status_translating">正在翻译</string>
+    <string name="label_russian">俄语识别</string>
+    <string name="label_chinese">中文翻译</string>
+    <string name="btn_start">开始监听</string>
+    <string name="btn_stop">停止监听</string>
+    <string name="hint_russian">等待语音输入...</string>
+    <string name="hint_chinese">翻译结果将显示在此处...</string>
+    <string name="permission_denied">需要麦克风权限才能使用语音识别</string>
+</resources>
