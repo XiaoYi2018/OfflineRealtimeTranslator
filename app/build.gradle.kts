@@ -24,9 +24,13 @@ android {
         }
     }
 
+    signingConfigs {
+        getByName("debug") // default debug keystore
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -54,7 +58,7 @@ android {
     // Prevent Gradle from compressing model weight files.
     // Without this, multi-GB assets cause extremely slow builds and extraction.
     androidResources {
-        noCompress += listOf("bin", "onnx", "model", "bpe")
+        noCompress += listOf("bin", "onnx", "model", "bpe", "gguf")
     }
 }
 

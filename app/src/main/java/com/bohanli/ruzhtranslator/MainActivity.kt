@@ -2,7 +2,11 @@ package com.bohanli.ruzhtranslator
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,7 +18,7 @@ import com.bohanli.ruzhtranslator.core.AppStatus
 import com.bohanli.ruzhtranslator.core.ModelManager
 import com.bohanli.ruzhtranslator.databinding.ActivityMainBinding
 import com.bohanli.ruzhtranslator.segmentation.SentenceSegmenter
-import com.bohanli.ruzhtranslator.translation.NllbTranslator
+import com.bohanli.ruzhtranslator.translation.GemmaTranslator
 import com.bohanli.ruzhtranslator.translation.TranslationQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +33,21 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val MODEL_ASR        = "vosk-model-ru-0.42"
         private const val MODEL_RECASEPUNC = "vosk-recasepunc-ru-0.22"
-        private const val MODEL_NLLB       = "nllb-200-distilled-1.3B-ct2-int8"
+        private const val MODEL_GEMMA      = "gemma-3-1b-it-Q4_K_M"
+
+        // Bright colors visible on dark backgrounds, cycling per segment
+        private val SEGMENT_COLORS = intArrayOf(
+            Color.parseColor("#FF80FF80"), // bright green
+            Color.parseColor("#FFFF80C0"), // bright pink
+            Color.parseColor("#FFFFFFFF"), // white
+            Color.parseColor("#FFFF6666"), // bright red
+            Color.parseColor("#FF66CCFF"), // bright sky blue
+            Color.parseColor("#FFFFDD55"), // bright yellow
+            Color.parseColor("#FFCC88FF"), // bright purple
+            Color.parseColor("#FFFF9944"), // bright orange
+            Color.parseColor("#FF44FFDD"), // bright cyan/teal
+            Color.parseColor("#FFDDAAFF"), // bright lavender
+        )
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -40,12 +58,17 @@ class MainActivity : AppCompatActivity() {
     // Core components – initialised asynchronously in loadModels()
     private var voskAsr: VoskAsrManager? = null
     private var recasepunc: RecasepuncProcessor? = null
-    private var nllbTranslator: NllbTranslator? = null
+    private var gemmaTranslator: GemmaTranslator? = null
     private var translationQueue: TranslationQueue? = null
     private val segmenter = SentenceSegmenter()
 
     @Volatile private var isListening = false
-    private val russianHistory = StringBuilder()
+    private var lastPartial = ""
+
+    // Segment lists for colored display
+    private val russianSegments = mutableListOf<String>()
+    private val chineseSegments = mutableListOf<String>()
+    private var segmentColorIndex = 0
 
     private val requestMicPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -71,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         isListening = false
         voskAsr?.release()
         translationQueue?.shutdown()
-        nllbTranslator?.destroy()
+        gemmaTranslator?.destroy()
         recasepunc?.close()
         mainScope.cancel()
     }
@@ -124,16 +147,16 @@ class MainActivity : AppCompatActivity() {
                     RecasepuncProcessor(recasepuncDir)
                 }
 
-                // ---- NLLB translator (stub-safe) ----
-                updateStatus(AppStatus.Loading("加载翻译引擎..."))
-                val nllbDir = withContext(Dispatchers.IO) {
-                    ModelManager.getModelDir(this@MainActivity, MODEL_NLLB)
+                // ---- Gemma translator ----
+                updateStatus(AppStatus.Loading("加载翻译引擎 (Gemma)..."))
+                val gemmaDir = withContext(Dispatchers.IO) {
+                    ModelManager.getModelDir(this@MainActivity, MODEL_GEMMA)
                 }
-                if (nllbDir == null) Log.w(TAG, "NLLB model not found – stub mode active")
+                if (gemmaDir == null) Log.w(TAG, "Gemma model not found")
 
-                val translator = NllbTranslator()
-                if (nllbDir != null) translator.initialize(nllbDir)
-                nllbTranslator = translator
+                val translator = GemmaTranslator()
+                if (gemmaDir != null) translator.initialize(gemmaDir)
+                gemmaTranslator = translator
 
                 // ---- Translation queue ----
                 translationQueue = TranslationQueue(
@@ -159,33 +182,34 @@ class MainActivity : AppCompatActivity() {
     // Vosk callbacks  (already on Main thread via VoskAsrManager)
     // -------------------------------------------------------------------------
 
-    /**
-     * Partial result from Vosk – update the Russian display with
-     * committed buffer + current in-progress hypothesis.
-     */
     private fun onVoskPartial(partial: String) {
+        lastPartial = partial
         updateRussianDisplay(partial)
     }
 
-    /**
-     * Final result from Vosk (speech pause detected).
-     * Runs recasepunc on IO, then applies segmentation on Main.
-     */
     private fun onVoskFinal(rawText: String) {
-        // Capture references on Main before any context switch
+        lastPartial = "" // final supersedes partial
         val rcp = recasepunc
         val queue = translationQueue
 
         mainScope.launch {
             val processed = withContext(Dispatchers.IO) {
-                rcp?.takeIf { it.isAvailable() }?.process(rawText) ?: rawText
+                val result = rcp?.takeIf { it.isAvailable() }?.process(rawText) ?: rawText
+                Log.d(TAG, "Recasepunc: in=[$rawText] out=[$result] available=${rcp?.isAvailable()}")
+                result
             }
 
-            // Segmentation and buffer management always on Main (no mutex needed)
-            val segment = segmenter.process(processed, isPause = true)
-            if (segment != null && segment.isNotBlank()) {
-                appendRussianSegment(segment)
-                queue?.submit(segment)
+            var first = true
+            while (true) {
+                val segment = segmenter.process(
+                    if (first) processed else "",
+                    isPause = true
+                ) ?: break
+                first = false
+                if (segment.isNotBlank()) {
+                    appendRussianSegment(segment)
+                    queue?.submit(segment)
+                }
             }
             updateRussianDisplay()
         }
@@ -219,6 +243,12 @@ class MainActivity : AppCompatActivity() {
         isListening = false
         voskAsr?.stopListening()
 
+        // Feed last partial into segmenter so it's not lost
+        if (lastPartial.isNotBlank()) {
+            segmenter.process(lastPartial, isPause = false)
+            lastPartial = ""
+        }
+
         // Flush any remaining uncommitted buffer to translation
         segmenter.flush()?.let { remaining ->
             if (remaining.isNotBlank()) {
@@ -241,28 +271,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun appendRussianSegment(text: String) {
-        if (russianHistory.isNotEmpty()) russianHistory.append("\n")
-        russianHistory.append(text)
+        russianSegments.add(text)
     }
 
     private fun updateRussianDisplay(partial: String = "") {
-        val parts = buildList {
-            val h = russianHistory.toString()
-            if (h.isNotEmpty()) add(h)
-            val buf = segmenter.getCurrentBuffer()
-            if (buf.isNotEmpty()) add(buf)
-            if (partial.isNotEmpty()) add(partial)
+        val ssb = SpannableStringBuilder()
+
+        // Committed segments with colors
+        for ((i, seg) in russianSegments.withIndex()) {
+            if (ssb.isNotEmpty()) ssb.append("\n")
+            val start = ssb.length
+            ssb.append(seg)
+            val color = SEGMENT_COLORS[i % SEGMENT_COLORS.size]
+            ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        binding.tvRussianHistory.text = parts.joinToString("\n")
+
+        // Uncommitted buffer (gray, not yet a segment)
+        val buf = segmenter.getCurrentBuffer()
+        if (buf.isNotEmpty()) {
+            if (ssb.isNotEmpty()) ssb.append("\n")
+            val start = ssb.length
+            ssb.append(buf)
+            ssb.setSpan(ForegroundColorSpan(Color.parseColor("#FF888888")), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        // Current partial (dimmer, in-progress)
+        if (partial.isNotEmpty()) {
+            if (ssb.isNotEmpty()) ssb.append("\n")
+            val start = ssb.length
+            ssb.append(partial)
+            ssb.setSpan(ForegroundColorSpan(Color.parseColor("#FF666666")), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        binding.tvRussianHistory.text = ssb
         binding.scrollViewRussian.post {
             binding.scrollViewRussian.fullScroll(View.FOCUS_DOWN)
         }
     }
 
     private fun appendChinese(text: String) {
-        val current = binding.tvChineseHistory.text
-        binding.tvChineseHistory.text = if (current.isEmpty()) text else "$current\n$text"
-        // Auto-scroll to bottom after layout pass
+        chineseSegments.add(text)
+
+        val ssb = SpannableStringBuilder()
+        for ((i, seg) in chineseSegments.withIndex()) {
+            if (ssb.isNotEmpty()) ssb.append("\n")
+            val start = ssb.length
+            ssb.append(seg)
+            // Same color index as the corresponding Russian segment
+            val color = SEGMENT_COLORS[i % SEGMENT_COLORS.size]
+            ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        binding.tvChineseHistory.text = ssb
         binding.scrollViewChinese.post {
             binding.scrollViewChinese.fullScroll(View.FOCUS_DOWN)
         }

@@ -1,169 +1,136 @@
-# Russian-Chinese Real-time Simultaneous Interpreter
+# 俄中实时同声传译器
 
-Fully offline Android app for real-time Russian to Chinese simultaneous interpretation.
+完全离线的 Android 实时俄语→中文同声传译应用。无需网络，所有推理均在手机端完成。
 
-**Stack:** Vosk ASR + vosk-recasepunc (ONNX) + NLLB CTranslate2 — all on-device, no cloud.
-
-## Architecture
+## 技术栈
 
 ```
-Microphone → Vosk ASR (Russian STT)
-           → vosk-recasepunc (punctuation/capitalization restoration)
-           → SentenceSegmenter (split into translatable segments)
-           → NLLB CTranslate2 (Russian → Chinese translation)
-           → UI display
+麦克风 → Vosk ASR（俄语语音识别）
+       → vosk-recasepunc（标点/大小写恢复）
+       → 句子分段器（俄语连接词智能断句）
+       → Gemma 3 1B-IT（llama.cpp，俄→中翻译）
+       → 彩色对照 UI 显示
 ```
 
-## UI
+## 界面
 
-- Status bar (top): current app state
-- Start/Stop button
-- Russian live buffer (scrollable): real-time ASR output
-- Chinese translation history (scrollable): translated segments
+- 顶部状态栏：显示当前 App 状态（加载中/监听中/翻译中）
+- 开始/停止按钮
+- 俄语识别区（可滚动）：实时 ASR 输出，已定稿文本彩色显示，缓冲区灰色
+- 中文翻译区（可滚动）：翻译结果，与对应俄语段落颜色一致
 
-## Requirements
+**彩色对照功能**：每个俄语文本段和对应的中文翻译使用相同颜色，相邻段落颜色不同（10色循环），方便一眼看出翻译对应关系。
 
-- Android phone with arm64-v8a (virtually all modern Android phones)
-- Android 8.0+ (API 26)
-- 8GB+ RAM recommended (16GB ideal)
-- ~3GB free storage for models
-- Android Studio with NDK support for building
+## 硬件要求
 
-## Models (NOT included in repo — too large)
+- Android 手机 arm64-v8a 架构（基本所有现代安卓手机）
+- Android 8.0+（API 26）
+- **8GB+ 内存**（推荐 16GB）
+- 约 3.5GB 存储空间用于模型文件
+- 推荐骁龙 8 系列或同等性能芯片
 
-Three models must be pushed to the phone manually:
+## 模型文件（不包含在仓库中）
 
-| Model | Size | Download |
-|-------|------|----------|
-| vosk-model-ru-0.42 | ~1.8GB | https://alphacephei.com/vosk/models → Russian → `vosk-model-ru-0.42` |
-| vosk-recasepunc-ru-0.22 | ~680MB | https://alphacephei.com/vosk/models → Russian → `vosk-recasepunc-ru-0.22` |
-| nllb-200-distilled-1.3B-ct2-int8 | ~1.3GB | See below |
+三个模型需手动推送到手机：
 
-### NLLB Translation Model
+| 模型 | 大小 | 用途 | 下载地址 |
+|------|------|------|----------|
+| vosk-model-ru-0.42 | ~1.8GB | 俄语语音识别 | [Vosk Models](https://alphacephei.com/vosk/models) |
+| vosk-recasepunc-ru-0.22 | ~680MB | 标点/大小写恢复 | [Vosk Models](https://alphacephei.com/vosk/models) |
+| gemma-3-1b-it-Q4_K_M | ~700MB | 俄→中翻译引擎 | 见下方 |
 
-Download the CTranslate2-converted NLLB model:
+### 下载 Gemma 翻译模型
 
 ```bash
-# Option 1: Using huggingface-cli
 pip install huggingface_hub
-huggingface-cli download JustFrederik/nllb-200-distilled-1.3B-ct2-int8 --local-dir nllb-200-distilled-1.3B-ct2-int8
-
-# Option 2: Manual download from https://huggingface.co/JustFrederik/nllb-200-distilled-1.3B-ct2-int8
-# Download all files into a folder named nllb-200-distilled-1.3B-ct2-int8/
+huggingface-cli download unsloth/gemma-3-1b-it-GGUF gemma-3-1b-it-Q4_K_M.gguf --local-dir gemma-3-1b-it-Q4_K_M
 ```
 
-Then download the SentencePiece model (required, NOT included in the CT2 conversion):
+### 推送模型到手机
 
-```bash
-wget -O nllb-200-distilled-1.3B-ct2-int8/sentencepiece.bpe.model \
-  "https://huggingface.co/facebook/nllb-200-distilled-1.3B/resolve/main/sentencepiece.bpe.model"
-```
-
-### Push Models to Phone
-
-Connect your phone via USB, then in PowerShell (adjust adb path as needed):
+PowerShell（Windows）：
 
 ```powershell
-$adb = "C:\Users\YOUR_USERNAME\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+$adb = "C:\Users\你的用户名\AppData\Local\Android\Sdk\platform-tools\adb.exe"
 $dest = "/sdcard/Android/data/com.bohanli.ruzhtranslator/files/models"
 
-& $adb push "D:\path\to\vosk-model-ru-0.42" "$dest/vosk-model-ru-0.42/"
-& $adb push "D:\path\to\vosk-recasepunc-ru-0.22" "$dest/vosk-recasepunc-ru-0.22/"
-& $adb push "D:\path\to\nllb-200-distilled-1.3B-ct2-int8" "$dest/nllb-200-distilled-1.3B-ct2-int8/"
+& $adb push "D:\你的路径\vosk-model-ru-0.42" "$dest/vosk-model-ru-0.42/"
+& $adb push "D:\你的路径\vosk-recasepunc-ru-0.22" "$dest/vosk-recasepunc-ru-0.22/"
+& $adb push "D:\你的路径\gemma-3-1b-it-Q4_K_M" "$dest/gemma-3-1b-it-Q4_K_M/"
 ```
 
-## Building the Native Libraries
+## 编译与部署
 
-The app uses CTranslate2 and SentencePiece compiled for Android arm64-v8a.
-Prebuilt `.so` files are included in `app/src/main/jniLibs/arm64-v8a/`.
+1. Android Studio 打开项目
+2. 确保安装 NDK（SDK Manager → SDK Tools → NDK）
+3. **Build Variants 选择 `release`**（release 编译优化对 llama.cpp 至关重要，debug 模式会慢 25-30 倍）
+4. USB 连接手机，开启 USB 调试
+5. 点击绿色运行按钮
+6. 首次编译会编译 llama.cpp（约 5-10 分钟），后续增量编译很快
 
-If you need to rebuild them (e.g., for a different ABI or to update versions):
-
-### Prerequisites
-
-- WSL2 with Ubuntu (on Windows) or native Linux
-- Android NDK r26d
-
-### Build Steps
-
-```bash
-# Run the build script from WSL2:
-bash tools/build_ct2_android.sh
-```
-
-This script will:
-1. Install build dependencies (cmake, ninja, etc.)
-2. Download Android NDK r26d (if not present)
-3. Build SentencePiece for arm64-v8a
-4. Build CTranslate2 with RUY backend (INT8 support) for arm64-v8a
-5. Copy `.so` files and headers to the project
-
-### Key Build Flags
-
-- `WITH_RUY=ON` — enables ARM NEON int8 acceleration (critical for performance)
-- `OPENMP_RUNTIME=NONE` — Android doesn't ship Intel OpenMP
-- CTranslate2 source requires patching `thread_pool.cc` to stub out `pthread_setaffinity_np` (not available in Android Bionic libc) — the build script handles this automatically
-
-## Build & Deploy
-
-1. Open the project in Android Studio
-2. Ensure NDK is installed (SDK Manager → SDK Tools → NDK)
-3. Connect your phone via USB with USB debugging enabled
-4. Click the green Run button (or Shift+F10)
-5. The first build compiles the JNI bridge — subsequent builds are faster
-
-## Project Structure
+## 项目结构
 
 ```
 app/src/main/
   cpp/
-    ctranslate2_jni.cpp         # JNI bridge to CTranslate2 + SentencePiece
-    CMakeLists.txt              # CMake build config (auto-detects prebuilt .so)
-    ctranslate2_include/        # CTranslate2 C++ headers
-    sentencepiece_include/      # SentencePiece C++ header
+    llama_jni.cpp               # JNI 桥接层（llama.cpp ↔ Kotlin）
+    CMakeLists.txt              # CMake 构建配置
+    llama.cpp/                  # llama.cpp 子模块（git submodule）
   java/.../
-    MainActivity.kt             # Main UI + pipeline orchestration
+    MainActivity.kt             # 主界面 + 管线调度 + 彩色对照显示
     asr/
-      VoskAsrManager.kt         # Vosk speech recognition wrapper
-      RecasepuncProcessor.kt    # ONNX punctuation/case restoration
+      VoskAsrManager.kt         # Vosk 语音识别封装
+      RecasepuncProcessor.kt    # ONNX 标点/大小写恢复
     core/
-      ModelManager.kt           # Model path resolution (internal/external/assets)
-      AppState.kt               # UI state definitions
+      ModelManager.kt           # 模型路径管理
+      AppStatus.kt              # UI 状态定义
     segmentation/
-      SentenceSegmenter.kt      # Split ASR output into translatable segments
+      SentenceSegmenter.kt      # 5 规则智能断句（标点/逗号/连接词/暂停/强制）
     translation/
-      NllbTranslator.kt         # Kotlin wrapper for CTranslate2 JNI
-      TranslationQueue.kt       # Background translation queue
-  jniLibs/arm64-v8a/
-    libctranslate2.so           # Prebuilt CTranslate2 (with RUY)
-    libsentencepiece.so         # Prebuilt SentencePiece
+      GemmaTranslator.kt        # Gemma 翻译器 Kotlin 封装
+      TranslationQueue.kt       # 后台翻译队列（保序）
   res/layout/
-    activity_main.xml           # UI layout
-tools/
-  build_ct2_android.sh          # Cross-compilation script for WSL2/Linux
+    activity_main.xml           # 界面布局（深色主题）
 ```
 
-## Technical Notes
+## 核心技术细节
 
-- JNI name mangling: `ruzhtranslator` → `ruzhtranslator` (underscores in package name)
-- CTranslate2 runs with `ComputeType::INT8` via RUY backend for ARM NEON acceleration
-- NLLB language tokens: `rus_Cyrl` (source), `zho_Hans` (target) — no `__` wrapper
-- SentencePiece tokenizer output gets `rus_Cyrl` prepended and `</s>` appended before translation
-- Target language token `zho_Hans` is passed as forced BOS (decoder prefix)
-- The CMake build auto-switches between full mode (`CTRANSLATE2_AVAILABLE=1`) and stub mode (`=0`) based on whether prebuilt `.so` files exist
+- **翻译引擎**：llama.cpp 静态链接，通过 git submodule 集成，CMake add_subdirectory 编译
+- **量化格式**：Gemma 3 1B-IT Q4_K_M（约 700MB，4-bit 量化）
+- **线程配置**：6 线程 + n_batch=512（prompt 批处理加速）
+- **智能断句**：5 级规则——句末标点 > 逗号分割 > 俄语连接词断句（и/а/но/что/когда 等 30+ 词）> 语音暂停 > 10 词强制分割
+- **JNI 命名**：包名中下划线 `ruzhtranslator` → JNI 中 `ruzhtranslator`
+- **Prompt 模板**：`<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
 
-## Performance Notes
+## 性能数据
 
-On Snapdragon 8 Elite (16GB RAM):
-- ASR latency: ~1-2 seconds (very fast)
-- Translation latency: ~3-8 seconds per segment with 1.3B model
-- Consider NLLB-200-distilled-600M for faster translation (~2x speedup)
+骁龙 8 Elite（16GB RAM）实测：
 
-## License
+| 指标 | 数值 |
+|------|------|
+| 模型加载 | ~1 秒 |
+| Prompt 处理 | ~60 tok/s |
+| 翻译生成 | ~40 tok/s |
+| 单段翻译延迟 | 1-3 秒 |
+| 语音识别延迟 | ~1 秒 |
 
-This project uses the following open-source components:
+> **重要**：必须使用 Release 构建。Debug 构建 llama.cpp 无编译优化，速度仅为 Release 的 1/30。
+
+## 已知限制
+
+- Gemma 1B 偶尔会在中文翻译中保留个别俄语词（人名、口语词），换更大模型可改善
+- 标点恢复模型对语音片段效果有限（大小写恢复正常工作，标点预测较弱）
+- 首次启动加载语音识别模型需 10-15 秒
+
+## 开源协议
+
+本项目使用以下开源组件：
 - [Vosk](https://alphacephei.com/vosk/) — Apache 2.0
-- [CTranslate2](https://github.com/OpenNMT/CTranslate2) — MIT
-- [SentencePiece](https://github.com/google/sentencepiece) — Apache 2.0
-- [NLLB-200](https://github.com/facebookresearch/fairseq/tree/nllb) — CC-BY-NC 4.0
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) — MIT
+- [Gemma](https://ai.google.dev/gemma) — Gemma Terms of Use
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) — MIT
+
+## 版本历史
+
+- **v2.0 — Gemma 翻译引擎 + 彩色对照**：迁移至 llama.cpp + Gemma 3 1B，新增俄语连接词断句、彩色段落对照、停止时保留未定稿文本
+- **v1.0 — 初始版本**：Vosk + NLLB CTranslate2 架构

@@ -6,36 +6,38 @@ package com.bohanli.ruzhtranslator.segmentation
  * Rules (in priority order):
  *  1. Sentence-ending punctuation (.  。  ?  ？  !  ！) → submit up to and including the punct
  *  2. COMMA_THRESHOLD or more commas → submit everything before the last comma
- *  3. Pause fallback → only if buffer meets PAUSE_MIN_WORDS + PAUSE_MIN_CHARS
- *
- * All thresholds are constants here for easy tuning.
+ *  3. Russian conjunction split → if buffer >= CONJ_MIN_WORDS, split before last conjunction
+ *  4. Pause fallback → only if buffer meets PAUSE_MIN_WORDS + PAUSE_MIN_CHARS
+ *  5. Force split at MAX_WORDS
  */
 class SentenceSegmenter {
 
     companion object {
-        // Rule 2: number of commas that triggers a forced split
         const val COMMA_THRESHOLD = 2
+        const val PAUSE_MIN_WORDS = 3
+        const val PAUSE_MIN_CHARS = 10
+        const val MAX_WORDS = 10
 
-        // Rule 3: minimum word count for pause-based submission
-        const val PAUSE_MIN_WORDS = 5
-
-        // Rule 3: minimum character count for pause-based submission
-        const val PAUSE_MIN_CHARS = 15
+        // Rule 3: minimum words before we allow conjunction-based split
+        const val CONJ_MIN_WORDS = 4
 
         private val END_PUNCT_CHARS = charArrayOf('.', '。', '?', '？', '!', '！')
         private val COMMA_CHARS = charArrayOf(',', '，')
+
+        // Common Russian conjunctions / connectors (lowercase)
+        // Split BEFORE these words when buffer is long enough
+        private val RU_CONJUNCTIONS = setOf(
+            "и", "а", "но", "или", "что", "потому", "когда",
+            "если", "чтобы", "также", "потом", "затем", "поэтому",
+            "который", "которая", "которое", "которые",
+            "где", "как", "так", "тоже", "ведь", "хотя",
+            "однако", "либо", "причём", "притом", "зато",
+            "то", "ещё", "уже", "тогда", "после"
+        )
     }
 
     private val buffer = StringBuilder()
 
-    /**
-     * Appends [newText] to the buffer, then applies segmentation rules.
-     *
-     * @param newText Newly recognised (and recasepunc-processed) text to append.
-     * @param isPause Whether Vosk just emitted a final result (speech pause detected).
-     * @return A segment to submit for translation, or null if no rule triggered yet.
-     *         The buffer is updated to hold only the remainder after the segment.
-     */
     fun process(newText: String, isPause: Boolean): String? {
         if (newText.isNotBlank()) {
             if (buffer.isNotEmpty()) buffer.append(' ')
@@ -67,13 +69,42 @@ class SentenceSegmenter {
             }
         }
 
-        // Rule 3: pause fallback with minimum length guard
+        // Rule 3: Russian conjunction split (when buffer has enough words)
+        val words = current.trim().split("\\s+".toRegex()).filter { it.isNotEmpty() }
+        if (words.size >= CONJ_MIN_WORDS) {
+            // Find the LAST conjunction at position >= CONJ_MIN_WORDS-1
+            // so we produce a segment of at least CONJ_MIN_WORDS words
+            var splitIdx = -1
+            for (i in (CONJ_MIN_WORDS - 1) until words.size) {
+                if (words[i].lowercase() in RU_CONJUNCTIONS) {
+                    splitIdx = i
+                }
+            }
+            if (splitIdx > 0) {
+                val segment = words.take(splitIdx).joinToString(" ")
+                val remainder = words.drop(splitIdx).joinToString(" ")
+                buffer.clear()
+                if (remainder.isNotEmpty()) buffer.append(remainder)
+                if (segment.isNotBlank()) return segment
+            }
+        }
+
+        // Rule 4: pause fallback with minimum length guard
         if (isPause) {
-            val wordCount = current.trim().split("\\s+".toRegex()).count { it.isNotEmpty() }
+            val wordCount = words.size
             if (wordCount >= PAUSE_MIN_WORDS && current.length >= PAUSE_MIN_CHARS) {
                 buffer.clear()
                 return current.trim()
             }
+        }
+
+        // Rule 5: force split if buffer is too long
+        if (words.size >= MAX_WORDS) {
+            val segment = words.take(MAX_WORDS).joinToString(" ")
+            val remainder = words.drop(MAX_WORDS).joinToString(" ")
+            buffer.clear()
+            if (remainder.isNotEmpty()) buffer.append(remainder)
+            return segment
         }
 
         return null

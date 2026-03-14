@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
  * [onBusyChanged] is called on MAIN thread: true when a translation starts, false when it finishes.
  */
 class TranslationQueue(
-    private val translator: NllbTranslator,
+    private val translator: GemmaTranslator,
     private val onResult: (String) -> Unit,
     private val onBusyChanged: (busy: Boolean) -> Unit = {}
 ) {

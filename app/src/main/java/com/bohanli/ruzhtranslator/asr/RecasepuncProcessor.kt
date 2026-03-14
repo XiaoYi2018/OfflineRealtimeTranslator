@@ -129,10 +129,26 @@ class RecasepuncProcessor(modelDir: File?) : AutoCloseable {
                 val caseTensor = result.get(outputNames[0]).orElse(null) as? OnnxTensor
                 val punctTensor = result.get(outputNames[1]).orElse(null) as? OnnxTensor
 
+                // Debug: log tensor shapes and first word's logits
+                if (caseTensor != null) Log.d(TAG, "case_logits shape: ${caseTensor.info.shape.toList()}")
+                if (punctTensor != null) {
+                    val pShape = punctTensor.info.shape
+                    Log.d(TAG, "punc_logits shape: ${pShape.toList()}")
+                    val nLabels = pShape[2].toInt()
+                    val buf = punctTensor.floatBuffer
+                    // Log first 3 words' punc logits
+                    for (di in 0 until minOf(3, words.size)) {
+                        val tok = wordFirstTok[di]
+                        val base = tok * nLabels
+                        val vals = (0 until nLabels).map { buf.get(base + it) }
+                        Log.d(TAG, "punc word[$di]='${words[di]}' tok=$tok logits=$vals argmax=${vals.indices.maxByOrNull { vals[it] }}")
+                    }
+                }
+
                 for ((i, word) in words.withIndex()) {
                     val tok = wordFirstTok[i]
                     val cl = if (caseTensor != null) argmax(caseTensor, tok, 0, N_CASE_LABELS) else 0
-                    val pl = if (punctTensor != null) argmax(punctTensor, tok, 0, N_PUNCT_LABELS) else 0
+                    val pl = if (punctTensor != null) argmax(punctTensor, tok, 0, punctTensor.info.shape[2].toInt()) else 0
                     if (i > 0) sb.append(' ')
                     sb.append(applyCase(word, cl))
                     if (pl in 1 until PUNCT_CHARS.size) sb.append(PUNCT_CHARS[pl])
