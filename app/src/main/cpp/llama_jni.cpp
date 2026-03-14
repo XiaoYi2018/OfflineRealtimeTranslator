@@ -64,8 +64,8 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeCreate(
 
         // Create context
         auto ctx_params = llama_context_default_params();
-        ctx_params.n_ctx = 1024;
-        ctx_params.n_batch = 512;   // Process prompt tokens in larger batches
+        ctx_params.n_ctx = 512;
+        ctx_params.n_batch = 512;
         ctx_params.n_threads = lctx->n_threads;
         ctx_params.n_threads_batch = lctx->n_threads;
         ctx_params.no_perf = true;

@@ -33,7 +33,7 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val MODEL_ASR        = "vosk-model-ru-0.42"
         private const val MODEL_RECASEPUNC = "vosk-recasepunc-ru-0.22"
-        private const val MODEL_GEMMA      = "gemma-3-1b-it-Q4_K_M"
+        private const val MODEL_GEMMA      = "gemma-3-4b-it-Q4_K_M"
 
         // Bright colors visible on dark backgrounds, cycling per segment
         private val SEGMENT_COLORS = intArrayOf(
