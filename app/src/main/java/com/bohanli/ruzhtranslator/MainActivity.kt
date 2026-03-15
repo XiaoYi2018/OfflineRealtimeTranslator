@@ -37,16 +37,16 @@ class MainActivity : AppCompatActivity() {
 
         // Bright colors visible on dark backgrounds, cycling per segment
         private val SEGMENT_COLORS = intArrayOf(
-            Color.parseColor("#FF80FF80"), // bright green
-            Color.parseColor("#FFFF80C0"), // bright pink
+            Color.parseColor("#FFFF6666"), // red
+            Color.parseColor("#FFFF9944"), // orange
+            Color.parseColor("#FFFFDD55"), // yellow
+            Color.parseColor("#FF80FF80"), // green
+            Color.parseColor("#FF44FFDD"), // teal
+            Color.parseColor("#FF66CCFF"), // sky blue
+            Color.parseColor("#FFCC88FF"), // purple
+            Color.parseColor("#FFDDAAFF"), // lavender
+            Color.parseColor("#FFFF80C0"), // pink
             Color.parseColor("#FFFFFFFF"), // white
-            Color.parseColor("#FFFF6666"), // bright red
-            Color.parseColor("#FF66CCFF"), // bright sky blue
-            Color.parseColor("#FFFFDD55"), // bright yellow
-            Color.parseColor("#FFCC88FF"), // bright purple
-            Color.parseColor("#FFFF9944"), // bright orange
-            Color.parseColor("#FF44FFDD"), // bright cyan/teal
-            Color.parseColor("#FFDDAAFF"), // bright lavender
         )
 
     }

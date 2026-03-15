@@ -102,7 +102,7 @@ app/src/main/
 - **量化格式**：Gemma 3 4B-IT Q4_K_M（约 2.5GB，4-bit 量化）
 - **KV Cache 前缀复用**：固定 prompt 前缀（翻译指令部分）在模型加载时预先解码并保存 KV 缓存快照，每次翻译调用时恢复快照而非重新解码，节省约 300-500ms/次
 - **流式输出**：翻译生成过程中每 2 个 token 通过 JNI 回调实时推送到 UI，打字机效果逐步显示翻译结果，视觉响应速度大幅提升
-- **分段策略**：v2.3 起使用 Vosk 原生语音活动检测（VAD）分段，不再自定义断句规则，段落语义完整性更好
+- **分段策略**：v2.3 起使用 Vosk 原生 VAD 分段；v2.5 通过 model.conf 的 `min-utterance-length=2.5` 参数优化，短句不易误切，长句自然分段
 - **线程配置**：6 线程 + n_batch=512（prompt 批处理加速）
 - **JNI 命名**：包名中下划线 `ruzhtranslator` → JNI 中 `ruzhtranslator`
 - **Prompt 模板**：`<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
@@ -113,7 +113,7 @@ app/src/main/
 
 | 指标 | 数值 |
 |------|------|
-| Vosk 模型加载 | ~10-15 秒 |
+| Vosk 模型加载（小模型） | <1 秒 |
 | Gemma 模型加载 | ~1-2 秒 |
 | KV Cache 前缀预计算 | ~5 秒（仅加载时一次） |
 | Prompt 处理（含前缀复用） | 仅需解码后缀，~700ms-3s |
@@ -127,7 +127,8 @@ app/src/main/
 
 - **长时间运行发热后速度下降**：手机持续高负载运行后 CPU 降频，翻译速度可能跟不上识别速度
 - **Vosk 原生分段较长**：依赖 Vosk VAD 分段，单段文本可能较长（60-90 tokens），翻译耗时随之增加
-- Gemma 4B 偶尔会在中文翻译中保留个别俄语词（人名、口语词）
+- Gemma 4B 极偶尔会在中文翻译中输出半句英语（约每 5-10 段出现一次）
+- Vosk 小模型偶尔在说话人磕巴时将两个短词错误合并为一个词
 - 标点恢复模型对语音片段效果有限（大小写恢复正常工作，标点预测较弱）
 - 纯 CPU 推理（Adreno GPU Vulkan 计算着色器与 llama.cpp 不兼容，ErrorDeviceLost）
 
@@ -141,6 +142,7 @@ app/src/main/
 
 ## 版本历史
 
+- **v2.5 — Vosk 分段调优 + 颜色优化**：通过 model.conf 的 Kaldi endpointer 参数（`min-utterance-length=2.5`）优化分段行为，短句不易误切，长句自然分段；段落颜色改为彩虹渐变序列，相邻段落颜色更协调
 - **v2.4 — 流式输出**：翻译生成时每 2 个 token 实时推送到 UI（JNI 回调），打字机效果逐步显示，视觉响应大幅提升
 - **v2.3 — Vosk 原生分段 + 小模型默认**：移除自定义断句规则和 partial 稳定性确认，改用 Vosk 原生 VAD 分段，段落语义完整性更好；ASR 默认切换至 vosk-model-small-ru-0.22（50MB），加载速度大幅提升，清晰语音场景识别准确率与大模型（1.8GB）几乎无差别
 - **v2.2 — KV Cache 前缀复用 + Partial 稳定性确认**：固定 prompt 前缀预解码并缓存 KV 状态，每次翻译恢复快照而非重新解码（~300-500ms/次）；跟踪 Vosk partial 结果稳定性，前缀词连续多次不变则提前确认送入翻译管线，降低整体延迟

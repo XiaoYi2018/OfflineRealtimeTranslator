@@ -57,7 +57,7 @@
 
 - `setEndpointerDelays()` 和 `setEndpointerMode()` 在 0.3.47 Android 版中**不存在**
 - 可用方法仅有：`setMaxAlternatives`, `setWords`, `setPartialWords`, `setSpeakerModel`, `setGrammar`
-- 无法通过 API 控制 Vosk 的端点检测灵敏度
+- **但可以通过模型目录下 `conf/model.conf` 直接控制 Kaldi endpointer 参数**（见 2.8）
 
 ### 2.5 自定义分段 vs Vosk 原生分段
 
@@ -89,6 +89,45 @@
 - 降频后：~1.5 tok/s（慢 5-6 倍）
 
 暂无解决方案，属于硬件限制。
+
+### 2.8 Vosk model.conf 参数调优
+
+Vosk 基于 Kaldi，模型目录下 `conf/model.conf` 可直接控制解码和 endpointer 参数，修改后 adb push 到手机重启 App 即生效，**无需重新编译**。
+
+#### 解码参数
+
+| 参数 | 原始值 | 含义 |
+|------|--------|------|
+| min-active | 200 | 解码器最少保留候选数 |
+| max-active | 3000 | 解码器最多活跃候选数 |
+| beam | 10.0 | 搜索宽度，越大越精准但越慢 |
+| lattice-beam | 2.0 | 输出候选路径宽度，越大备选越多 |
+| acoustic-scale | 1.0 | 声学模型得分权重，一般不动 |
+| frame-subsampling-factor | 3 | 每3帧取1帧，模型结构决定，不能改 |
+| silence-phones | 1:2:3:...10 | 哪些音素算"静音"，用于 endpoint 检测 |
+
+#### Endpoint 规则
+
+| 参数 | 原始值 | 含义 |
+|------|--------|------|
+| rule2.min-trailing-silence | 0.5 | 检测到语音后，静默多久触发切分 |
+| rule2.min-utterance-length | 0.0(默认) | 说话不到此秒数则 rule2 不触发 |
+| rule3.min-trailing-silence | 1.0 | rule2 未触发时的兜底，静默此秒数切 |
+| rule4.min-trailing-silence | 2.0 | 绝对兜底，静默此秒数必切 |
+
+#### 调参实验记录
+
+| 操作 | 效果 | 满意度 |
+|------|------|--------|
+| 只改 rule2 静默 0.5→1.0 | 分段变长了 | 不是想要的效果 |
+| 只加 min-utterance-length=2.5（解码参数保持原始） | 候选最长半到三分之二输入框，短句不会只蹦单词 | **最满意** |
+| beam 10→13, lattice-beam 2→4, max-active 3000→5000 | 候选又变成大段落，endpoint 规则似乎失效 | 不满意，已还原 |
+
+#### 最佳配置（v2.5）
+
+解码参数全部保持原始值，只加 `--endpoint.rule2.min-utterance-length=2.5`。
+
+**注意**：解码参数（beam/lattice-beam/max-active）和 endpoint 规则互相影响，调大解码宽度后 endpoint 触发行为会改变。识别精准度问题不应通过调 beam 解决。
 
 ---
 
@@ -132,9 +171,8 @@
 研究 llama.cpp 的 `GGML_OPENCL` 后端在 Adreno 上的兼容性。
 参考 LLM-HUB 项目（GitHub 可搜到，也在 Google Play 上架）。
 
-### 4.4 Vosk 分段参数调优（优先级：低）
-研究 Vosk 源码或更高版本 API，找到控制 final result 输出频率的方法。
-当前 0.3.47 Android 版无可用端点检测参数。
+### 4.4 Vosk 分段参数调优（已完成，见 2.8）
+通过 `conf/model.conf` 的 Kaldi endpointer 参数控制分段行为，v2.5 已调优。
 
 ### 4.5 翻译模型探索（优先级：低）
 - 更大模型（Gemma 12B）可能提升翻译质量，但手机内存和速度是瓶颈
@@ -209,3 +247,12 @@
 - **视觉效果**：翻译结果逐步出现（打字机效果），用户不再需要等待整段翻译完成才能看到结果
 - **leading whitespace 处理**：跳过生成开头的空白字符，避免流式输出开头出现空格
 - **end_of_turn 检测**：流式输出中检测 `<end_of_turn>` 标记并截断，不会将控制标签推送到 UI
+
+### v2.5 — Vosk 分段参数调优
+- **发现 model.conf 可控制 endpointer**：Vosk 基于 Kaldi，模型目录 `conf/model.conf` 中的 endpoint 参数可直接控制分段行为，无需重编译 Vosk 或调用不存在的 API
+- **调参实验**：
+  - rule2 静默 0.5→1.0：分段变长但不是想要的效果
+  - 加 min-utterance-length=2.5：**最佳效果** — 短句不蹦单词，长句不超过半到三分之二输入框
+  - 调大 beam/lattice-beam/max-active：候选又变成大段落，endpoint 规则失效，已还原
+- **最终配置**：解码参数保持原始值，只加 `--endpoint.rule2.min-utterance-length=2.5`
+- **重要发现**：解码参数和 endpoint 规则互相影响，不能独立调整。识别精准度不应通过调 beam 解决
