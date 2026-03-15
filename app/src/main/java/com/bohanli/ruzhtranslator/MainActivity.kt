@@ -48,6 +48,10 @@ class MainActivity : AppCompatActivity() {
             Color.parseColor("#FF44FFDD"), // bright cyan/teal
             Color.parseColor("#FFDDAAFF"), // bright lavender
         )
+
+        // Partial stability: confirm words that have been unchanged across N consecutive partials
+        private const val STABLE_HITS = 8       // how many callbacks a word must survive unchanged
+        private const val STABLE_MIN_WORDS = 8  // don't confirm until partial has at least this many unconsumed words
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -64,6 +68,11 @@ class MainActivity : AppCompatActivity() {
 
     @Volatile private var isListening = false
     private var lastPartial = ""
+
+    // Partial stability tracking
+    private var stablePrefix = ""          // longest prefix that matched last partial
+    private var stableHitCount = 0         // how many consecutive partials kept that prefix
+    private var confirmedWordCount = 0     // how many words from current partial already confirmed
 
     // Segment lists for colored display
     private val russianSegments = mutableListOf<String>()
@@ -184,18 +193,94 @@ class MainActivity : AppCompatActivity() {
 
     private fun onVoskPartial(partial: String) {
         lastPartial = partial
+
+        val words = partial.split(" ").filter { it.isNotBlank() }
+        val unconsumed = words.size - confirmedWordCount
+
+        if (unconsumed >= STABLE_MIN_WORDS) {
+            // Check how many unconsumed words match the previous partial's prefix
+            val unconsumedText = words.drop(confirmedWordCount).joinToString(" ")
+            if (unconsumedText.startsWith(stablePrefix) && stablePrefix.isNotEmpty()) {
+                stableHitCount++
+            } else {
+                // Prefix changed — reset stability counter to the new longest common prefix
+                stablePrefix = unconsumedText
+                stableHitCount = 1
+            }
+
+            if (stableHitCount >= STABLE_HITS) {
+                // The front ~60% of unconsumed words are stable — confirm them
+                val confirmCount = (unconsumed * 0.6).toInt()
+                if (confirmCount > 0) {
+                    val newWords = words.subList(confirmedWordCount, confirmedWordCount + confirmCount)
+                    val newText = newWords.joinToString(" ")
+                    confirmedWordCount += confirmCount
+                    stablePrefix = ""
+                    stableHitCount = 0
+
+                    Log.d(TAG, "Stable confirm: [$newText] ($confirmedWordCount/${words.size} words)")
+
+                    val rcp = recasepunc
+                    val queue = translationQueue
+                    mainScope.launch {
+                        val processed = withContext(Dispatchers.IO) {
+                            rcp?.takeIf { it.isAvailable() }?.process(newText) ?: newText
+                        }
+                        var first = true
+                        while (true) {
+                            val segment = segmenter.process(
+                                if (first) processed else "",
+                                isPause = false
+                            ) ?: break
+                            first = false
+                            if (segment.isNotBlank()) {
+                                appendRussianSegment(segment)
+                                queue?.submit(segment)
+                            }
+                        }
+                        updateRussianDisplay(partial)
+                    }
+                    return
+                }
+            }
+        } else {
+            stablePrefix = ""
+            stableHitCount = 0
+        }
+
         updateRussianDisplay(partial)
     }
 
     private fun onVoskFinal(rawText: String) {
-        lastPartial = "" // final supersedes partial
+        lastPartial = ""
+
+        // Only process the tail not already confirmed from partials
+        val allWords = rawText.split(" ").filter { it.isNotBlank() }
+        val remaining = if (confirmedWordCount > 0 && confirmedWordCount <= allWords.size) {
+            allWords.drop(confirmedWordCount).joinToString(" ")
+        } else if (confirmedWordCount > 0) {
+            ""
+        } else {
+            rawText
+        }
+
+        // Reset stability tracking for next utterance
+        confirmedWordCount = 0
+        stablePrefix = ""
+        stableHitCount = 0
+
+        if (remaining.isBlank()) {
+            updateRussianDisplay()
+            return
+        }
+
         val rcp = recasepunc
         val queue = translationQueue
 
         mainScope.launch {
             val processed = withContext(Dispatchers.IO) {
-                val result = rcp?.takeIf { it.isAvailable() }?.process(rawText) ?: rawText
-                Log.d(TAG, "Recasepunc: in=[$rawText] out=[$result] available=${rcp?.isAvailable()}")
+                val result = rcp?.takeIf { it.isAvailable() }?.process(remaining) ?: remaining
+                Log.d(TAG, "Recasepunc: in=[$remaining] out=[$result] available=${rcp?.isAvailable()}")
                 result
             }
 
@@ -233,6 +318,9 @@ class MainActivity : AppCompatActivity() {
             updateStatus(AppStatus.Error("语音识别引擎未就绪")); return
         }
         segmenter.reset()
+        confirmedWordCount = 0
+        stablePrefix = ""
+        stableHitCount = 0
         isListening = true
         asr.startListening()
         updateStatus(AppStatus.Listening)
@@ -295,12 +383,22 @@ class MainActivity : AppCompatActivity() {
             ssb.setSpan(ForegroundColorSpan(Color.parseColor("#FF888888")), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-        // Current partial (dimmer, in-progress)
+        // Current partial (dimmer, in-progress) — only show unconfirmed tail
         if (partial.isNotEmpty()) {
-            if (ssb.isNotEmpty()) ssb.append("\n")
-            val start = ssb.length
-            ssb.append(partial)
-            ssb.setSpan(ForegroundColorSpan(Color.parseColor("#FF666666")), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val partialWords = partial.split(" ").filter { it.isNotBlank() }
+            val displayText = if (confirmedWordCount > 0 && confirmedWordCount < partialWords.size) {
+                partialWords.drop(confirmedWordCount).joinToString(" ")
+            } else if (confirmedWordCount >= partialWords.size) {
+                ""
+            } else {
+                partial
+            }
+            if (displayText.isNotEmpty()) {
+                if (ssb.isNotEmpty()) ssb.append("\n")
+                val start = ssb.length
+                ssb.append(displayText)
+                ssb.setSpan(ForegroundColorSpan(Color.parseColor("#FF666666")), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
 
         binding.tvRussianHistory.text = ssb

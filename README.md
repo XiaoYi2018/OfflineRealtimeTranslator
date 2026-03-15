@@ -8,7 +8,7 @@
 麦克风 → Vosk ASR（俄语语音识别）
        → vosk-recasepunc（标点/大小写恢复）
        → 句子分段器（俄语连接词智能断句）
-       → Gemma 3 1B-IT（llama.cpp，俄→中翻译）
+       → Gemma 3 4B-IT（llama.cpp，俄→中翻译）
        → 彩色对照 UI 显示
 ```
 
@@ -24,9 +24,9 @@
 ## 硬件要求
 
 - Android 手机 arm64-v8a 架构（基本所有现代安卓手机）
-- Android 8.0+（API 26）
+- Android 10+（API 29）
 - **8GB+ 内存**（推荐 16GB）
-- 约 3.5GB 存储空间用于模型文件
+- 约 5GB 存储空间用于模型文件
 - 推荐骁龙 8 系列或同等性能芯片
 
 ## 模型文件（不包含在仓库中）
@@ -37,13 +37,13 @@
 |------|------|------|----------|
 | vosk-model-ru-0.42 | ~1.8GB | 俄语语音识别 | [Vosk Models](https://alphacephei.com/vosk/models) |
 | vosk-recasepunc-ru-0.22 | ~680MB | 标点/大小写恢复 | [Vosk Models](https://alphacephei.com/vosk/models) |
-| gemma-3-1b-it-Q4_K_M | ~700MB | 俄→中翻译引擎 | 见下方 |
+| gemma-3-4b-it-Q4_K_M | ~2.5GB | 俄→中翻译引擎 | 见下方 |
 
 ### 下载 Gemma 翻译模型
 
 ```bash
 pip install huggingface_hub
-huggingface-cli download unsloth/gemma-3-1b-it-GGUF gemma-3-1b-it-Q4_K_M.gguf --local-dir gemma-3-1b-it-Q4_K_M
+huggingface-cli download unsloth/gemma-3-4b-it-GGUF gemma-3-4b-it-Q4_K_M.gguf --local-dir gemma-3-4b-it-Q4_K_M
 ```
 
 ### 推送模型到手机
@@ -56,7 +56,7 @@ $dest = "/sdcard/Android/data/com.bohanli.ruzhtranslator/files/models"
 
 & $adb push "D:\你的路径\vosk-model-ru-0.42" "$dest/vosk-model-ru-0.42/"
 & $adb push "D:\你的路径\vosk-recasepunc-ru-0.22" "$dest/vosk-recasepunc-ru-0.22/"
-& $adb push "D:\你的路径\gemma-3-1b-it-Q4_K_M" "$dest/gemma-3-1b-it-Q4_K_M/"
+& $adb push "D:\你的路径\gemma-3-4b-it-Q4_K_M" "$dest/gemma-3-4b-it-Q4_K_M/"
 ```
 
 ## 编译与部署
@@ -96,9 +96,11 @@ app/src/main/
 ## 核心技术细节
 
 - **翻译引擎**：llama.cpp 静态链接，通过 git submodule 集成，CMake add_subdirectory 编译
-- **量化格式**：Gemma 3 1B-IT Q4_K_M（约 700MB，4-bit 量化）
+- **量化格式**：Gemma 3 4B-IT Q4_K_M（约 2.5GB，4-bit 量化）
+- **KV Cache 前缀复用**：固定 prompt 前缀（翻译指令部分）在模型加载时预先解码并保存 KV 缓存快照，每次翻译调用时恢复快照而非重新解码，节省约 300-500ms/次
+- **Partial 稳定性确认**：跟踪 Vosk partial 结果的前缀稳定性，连续多次回调未变的词提前确认送入翻译管线，减少等待 Vosk final result 的延迟
 - **线程配置**：6 线程 + n_batch=512（prompt 批处理加速）
-- **智能断句**：5 级规则——句末标点 > 逗号分割 > 俄语连接词断句（и/а/но/что/когда 等 30+ 词）> 语音暂停 > 10 词强制分割
+- **智能断句**：5 级规则——句末标点 > 逗号分割 > 俄语强连词断句（но/однако/поэтому/хотя/зато/потому）> 语音暂停 > 10 词强制分割
 - **JNI 命名**：包名中下划线 `ruzhtranslator` → JNI 中 `ruzhtranslator`
 - **Prompt 模板**：`<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
 
@@ -108,19 +110,23 @@ app/src/main/
 
 | 指标 | 数值 |
 |------|------|
-| 模型加载 | ~1 秒 |
-| Prompt 处理 | ~60 tok/s |
-| 翻译生成 | ~40 tok/s |
-| 单段翻译延迟 | 1-3 秒 |
+| Vosk 模型加载 | ~10-15 秒 |
+| Gemma 模型加载 | ~1-2 秒 |
+| KV Cache 前缀预计算 | ~5 秒（仅加载时一次） |
+| Prompt 处理（含前缀复用） | 仅需解码后缀，~700ms-3s |
+| 翻译生成 | ~8-10 tok/s |
+| 单段翻译延迟 | 1-5 秒（视输入长度） |
 | 语音识别延迟 | ~1 秒 |
 
 > **重要**：必须使用 Release 构建。Debug 构建 llama.cpp 无编译优化，速度仅为 Release 的 1/30。
 
 ## 已知限制
 
-- Gemma 1B 偶尔会在中文翻译中保留个别俄语词（人名、口语词），换更大模型可改善
+- **分段略微细碎**：当前按标点/逗号/连词等规则分段，非语义级分段，偶尔会在不完整的语义处断开
+- **长时间运行发热后速度下降**：手机持续高负载运行后 CPU 降频，翻译速度可能跟不上识别速度
+- Gemma 4B 偶尔会在中文翻译中保留个别俄语词（人名、口语词）
 - 标点恢复模型对语音片段效果有限（大小写恢复正常工作，标点预测较弱）
-- 首次启动加载语音识别模型需 10-15 秒
+- 纯 CPU 推理（Adreno GPU Vulkan 计算着色器与 llama.cpp 不兼容，ErrorDeviceLost）
 
 ## 开源协议
 
@@ -132,5 +138,7 @@ app/src/main/
 
 ## 版本历史
 
+- **v2.2 — KV Cache 前缀复用 + Partial 稳定性确认**：固定 prompt 前缀预解码并缓存 KV 状态，每次翻译恢复快照而非重新解码（~300-500ms/次）；跟踪 Vosk partial 结果稳定性，前缀词连续多次不变则提前确认送入翻译管线，降低整体延迟
+- **v2.1 — Gemma 4B 升级 + 连词精简**：翻译模型从 Gemma 3 1B 升级至 4B（Q4_K_M），翻译质量显著提升；连词断句列表从 33 个精简至 6 个强句界连词（но/однако/поэтому/хотя/зато/потому），减少碎片化断句
 - **v2.0 — Gemma 翻译引擎 + 彩色对照**：迁移至 llama.cpp + Gemma 3 1B，新增俄语连接词断句、彩色段落对照、停止时保留未定稿文本
 - **v1.0 — 初始版本**：Vosk + NLLB CTranslate2 架构

@@ -6,7 +6,8 @@ package com.bohanli.ruzhtranslator.segmentation
  * Rules (in priority order):
  *  1. Sentence-ending punctuation (.  。  ?  ？  !  ！) → submit up to and including the punct
  *  2. COMMA_THRESHOLD or more commas → submit everything before the last comma
- *  3. Russian conjunction split → if buffer >= CONJ_MIN_WORDS, split before last conjunction
+ *  3. Strong conjunction split → only conjunctions that reliably mark a new sentence,
+ *     and only when buffer already has enough words on both sides
  *  4. Pause fallback → only if buffer meets PAUSE_MIN_WORDS + PAUSE_MIN_CHARS
  *  5. Force split at MAX_WORDS
  */
@@ -24,15 +25,10 @@ class SentenceSegmenter {
         private val END_PUNCT_CHARS = charArrayOf('.', '。', '?', '？', '!', '！')
         private val COMMA_CHARS = charArrayOf(',', '，')
 
-        // Common Russian conjunctions / connectors (lowercase)
-        // Split BEFORE these words when buffer is long enough
+        // Only strong sentence-boundary conjunctions that almost always start a new clause.
+        // Excluded: "и", "а", "или", "что", "как", "то", etc. — too common mid-sentence.
         private val RU_CONJUNCTIONS = setOf(
-            "и", "а", "но", "или", "что", "потому", "когда",
-            "если", "чтобы", "также", "потом", "затем", "поэтому",
-            "который", "которая", "которое", "которые",
-            "где", "как", "так", "тоже", "ведь", "хотя",
-            "однако", "либо", "причём", "притом", "зато",
-            "то", "ещё", "уже", "тогда", "после"
+            "но", "однако", "поэтому", "хотя", "зато", "потому"
         )
     }
 
@@ -69,11 +65,9 @@ class SentenceSegmenter {
             }
         }
 
-        // Rule 3: Russian conjunction split (when buffer has enough words)
+        // Rule 3: strong conjunction split (when buffer has enough words)
         val words = current.trim().split("\\s+".toRegex()).filter { it.isNotEmpty() }
         if (words.size >= CONJ_MIN_WORDS) {
-            // Find the LAST conjunction at position >= CONJ_MIN_WORDS-1
-            // so we produce a segment of at least CONJ_MIN_WORDS words
             var splitIdx = -1
             for (i in (CONJ_MIN_WORDS - 1) until words.size) {
                 if (words[i].lowercase() in RU_CONJUNCTIONS) {

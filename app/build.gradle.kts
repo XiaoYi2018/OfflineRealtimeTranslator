@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.bohanli.ruzhtranslator"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"

@@ -27,15 +27,29 @@ struct LlamaCtx {
     llama_context * ctx = nullptr;
     llama_sampler * sampler = nullptr;
     int n_threads = 6;
+
+    // KV cache prefix reuse: save state after decoding the fixed prompt prefix
+    std::vector<uint8_t> prefix_state;
+    int prefix_n_tokens = 0;  // number of tokens in the prefix (= starting pos for suffix)
 };
 
-static std::string build_prompt(const std::string& text) {
-    return "<start_of_turn>user\n"
-           "Translate the following Russian text to Simplified Chinese. "
-           "Output only the translation, nothing else.\n\n"
-           "Russian: " + text + "\n"
+// Fixed prefix — everything before the variable Russian text
+static const char* PROMPT_PREFIX =
+    "<start_of_turn>user\n"
+    "Translate the following Russian text to Simplified Chinese. "
+    "Output only the translation, nothing else.\n\n"
+    "Russian: ";
+
+// Build the suffix: Russian text + closing tags
+static std::string build_suffix(const std::string& text) {
+    return text + "\n"
            "Chinese:<end_of_turn>\n"
            "<start_of_turn>model\n";
+}
+
+// Full prompt (used only for logging)
+static std::string build_prompt(const std::string& text) {
+    return std::string(PROMPT_PREFIX) + build_suffix(text);
 }
 
 extern "C" {
@@ -55,7 +69,7 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeCreate(
 
         // Load model
         auto model_params = llama_model_default_params();
-        model_params.n_gpu_layers = 0; // CPU only for now
+        model_params.n_gpu_layers = 0; // CPU only — Adreno Vulkan compute triggers ErrorDeviceLost
         lctx->model = llama_model_load_from_file(modelPath, model_params);
         if (!lctx->model) {
             LOGE("Failed to load model from %s", modelPath);
@@ -82,6 +96,32 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeCreate(
 
         LOGI("Gemma model loaded successfully");
 
+        // --- Pre-compute the fixed prompt prefix into KV cache ---
+        const llama_vocab * vocab = llama_model_get_vocab(lctx->model);
+        std::string prefix(PROMPT_PREFIX);
+        int n_prefix_max = prefix.size() + 64;
+        std::vector<llama_token> prefix_tokens(n_prefix_max);
+        int n_prefix = llama_tokenize(vocab, prefix.c_str(), prefix.size(),
+                                       prefix_tokens.data(), n_prefix_max, true, true);
+        if (n_prefix > 0) {
+            prefix_tokens.resize(n_prefix);
+            llama_batch batch = llama_batch_get_one(prefix_tokens.data(), n_prefix);
+            if (llama_decode(lctx->ctx, batch) == 0) {
+                // Save the KV cache state for sequence 0
+                size_t state_size = llama_state_seq_get_size(lctx->ctx, 0);
+                lctx->prefix_state.resize(state_size);
+                size_t written = llama_state_seq_get_data(lctx->ctx, lctx->prefix_state.data(),
+                                                          lctx->prefix_state.size(), 0);
+                lctx->prefix_state.resize(written);
+                lctx->prefix_n_tokens = n_prefix;
+                LOGI("Prefix KV cache saved: %d tokens, %zu bytes", n_prefix, written);
+            } else {
+                LOGW("Prefix decode failed, will fall back to full decode each call");
+            }
+        } else {
+            LOGW("Prefix tokenization failed (%d), will fall back to full decode each call", n_prefix);
+        }
+
     } catch (const std::exception& e) {
         LOGE("Init error: %s", e.what());
         if (lctx->sampler) llama_sampler_free(lctx->sampler);
@@ -105,36 +145,69 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
     }
 
     const char* text = env->GetStringUTFChars(jText, nullptr);
-    std::string prompt = build_prompt(text);
+    std::string suffix = build_suffix(text);
     env->ReleaseStringUTFChars(jText, text);
-
-    LOGI("Prompt length: %zu chars", prompt.size());
 
     std::string result;
     try {
         const llama_vocab * vocab = llama_model_get_vocab(lctx->model);
 
-        // Tokenize prompt
-        int n_prompt_max = prompt.size() + 256;
-        std::vector<llama_token> tokens(n_prompt_max);
-        int n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(),
-                                       tokens.data(), n_prompt_max, true, true);
-        if (n_tokens < 0) {
-            LOGE("Tokenization failed");
-            return env->NewStringUTF("[分词失败]");
-        }
-        tokens.resize(n_tokens);
-        LOGI("Prompt tokens: %d", n_tokens);
+        bool using_prefix_cache = !lctx->prefix_state.empty();
 
         // Clear KV cache
         llama_memory_clear(llama_get_memory(lctx->ctx), true);
 
-        // Decode prompt
         auto t0 = std::chrono::steady_clock::now();
-        llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
-        if (llama_decode(lctx->ctx, batch) != 0) {
-            LOGE("Prompt decode failed");
-            return env->NewStringUTF("[解码失败]");
+
+        if (using_prefix_cache) {
+            // Restore the pre-computed prefix KV cache state
+            size_t read = llama_state_seq_set_data(lctx->ctx, lctx->prefix_state.data(),
+                                                    lctx->prefix_state.size(), 0);
+            if (read == 0) {
+                LOGW("Prefix state restore failed, falling back to full decode");
+                using_prefix_cache = false;
+            }
+        }
+
+        if (using_prefix_cache) {
+            // Only tokenize and decode the suffix (variable part)
+            int n_suffix_max = suffix.size() + 64;
+            std::vector<llama_token> suffix_tokens(n_suffix_max);
+            int n_suffix = llama_tokenize(vocab, suffix.c_str(), suffix.size(),
+                                           suffix_tokens.data(), n_suffix_max, false, true);
+            if (n_suffix < 0) {
+                LOGE("Suffix tokenization failed");
+                return env->NewStringUTF("[分词失败]");
+            }
+            suffix_tokens.resize(n_suffix);
+
+            LOGI("Prefix reuse: %d cached tokens + %d suffix tokens", lctx->prefix_n_tokens, n_suffix);
+
+            // Decode only the suffix, starting at the position after the prefix
+            llama_batch batch = llama_batch_get_one(suffix_tokens.data(), n_suffix);
+            if (llama_decode(lctx->ctx, batch) != 0) {
+                LOGE("Suffix decode failed");
+                return env->NewStringUTF("[解码失败]");
+            }
+        } else {
+            // Fallback: full prompt decode (no prefix cache available)
+            std::string prompt = std::string(PROMPT_PREFIX) + suffix;
+            int n_prompt_max = prompt.size() + 256;
+            std::vector<llama_token> tokens(n_prompt_max);
+            int n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(),
+                                           tokens.data(), n_prompt_max, true, true);
+            if (n_tokens < 0) {
+                LOGE("Tokenization failed");
+                return env->NewStringUTF("[分词失败]");
+            }
+            tokens.resize(n_tokens);
+            LOGI("Full prompt tokens: %d (no prefix cache)", n_tokens);
+
+            llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
+            if (llama_decode(lctx->ctx, batch) != 0) {
+                LOGE("Prompt decode failed");
+                return env->NewStringUTF("[解码失败]");
+            }
         }
         auto t1 = std::chrono::steady_clock::now();
 
