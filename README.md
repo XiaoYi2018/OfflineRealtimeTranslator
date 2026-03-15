@@ -103,6 +103,7 @@ app/src/main/
 - **KV Cache 前缀复用**：固定 prompt 前缀（翻译指令部分）在模型加载时预先解码并保存 KV 缓存快照，每次翻译调用时恢复快照而非重新解码，节省约 300-500ms/次
 - **流式输出**：翻译生成过程中每 2 个 token 通过 JNI 回调实时推送到 UI，打字机效果逐步显示翻译结果，视觉响应速度大幅提升
 - **分段策略**：v2.3 起使用 Vosk 原生 VAD 分段；v2.5 通过 model.conf 的 `min-utterance-length=2.5` 参数优化，短句不易误切，长句自然分段
+- **OpenCL GPU 加速**（v2.6）：llama.cpp 的 `GGML_OPENCL` 后端，Adreno 830 专用优化 kernel，生成速度 +40%，发热大幅降低
 - **线程配置**：6 线程 + n_batch=512（prompt 批处理加速）
 - **JNI 命名**：包名中下划线 `ruzhtranslator` → JNI 中 `ruzhtranslator`
 - **Prompt 模板**：`<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
@@ -116,21 +117,22 @@ app/src/main/
 | Vosk 模型加载（小模型） | <1 秒 |
 | Gemma 模型加载 | ~1-2 秒 |
 | KV Cache 前缀预计算 | ~5 秒（仅加载时一次） |
-| Prompt 处理（含前缀复用） | 仅需解码后缀，~700ms-3s |
-| 翻译生成 | ~8-10 tok/s |
-| 单段翻译延迟 | 1-5 秒（视输入长度） |
+| Prompt 处理（含前缀复用） | 仅需解码后缀，~550ms-1.7s |
+| 翻译生成（OpenCL GPU） | ~11-14 tok/s |
+| 翻译生成（纯 CPU，参考） | ~8-10 tok/s |
+| 单段翻译延迟 | 1-3 秒（视输入长度） |
 | 语音识别延迟 | ~1 秒 |
 
 > **重要**：必须使用 Release 构建。Debug 构建 llama.cpp 无编译优化，速度仅为 Release 的 1/30。
 
 ## 已知限制
 
-- **长时间运行发热后速度下降**：手机持续高负载运行后 CPU 降频，翻译速度可能跟不上识别速度
+- **长时间运行发热**：v2.6 OpenCL GPU 加速后发热大幅改善，但极端长时间运行仍可能降频
 - **Vosk 原生分段较长**：依赖 Vosk VAD 分段，单段文本可能较长（60-90 tokens），翻译耗时随之增加
-- Gemma 4B 极偶尔会在中文翻译中输出半句英语（约每 5-10 段出现一次）
+- Gemma 4B 极偶尔会在中文翻译中输出其他语言（英语/日语，约每 10-15 段出现一次）
 - Vosk 小模型偶尔在说话人磕巴时将两个短词错误合并为一个词
 - 标点恢复模型对语音片段效果有限（大小写恢复正常工作，标点预测较弱）
-- 纯 CPU 推理（Adreno GPU Vulkan 计算着色器与 llama.cpp 不兼容，ErrorDeviceLost）
+- Vulkan GPU 后端不兼容 Adreno（ErrorDeviceLost），已改用 OpenCL
 
 ## 开源协议
 
@@ -142,6 +144,7 @@ app/src/main/
 
 ## 版本历史
 
+- **v2.6 — OpenCL GPU 加速**：启用 llama.cpp 的 `GGML_OPENCL` 后端，Adreno 830 专用优化 kernel。生成速度从 8-10 tok/s 提升至 11-14 tok/s（+40%），prompt 处理从 700ms-3s 降至 550ms-1.7s，发热大幅改善可持续运行。编译需要 KhronosGroup OpenCL Headers + 设备 libOpenCL.so stub
 - **v2.5 — Vosk 分段调优 + 颜色优化**：通过 model.conf 的 Kaldi endpointer 参数（`min-utterance-length=2.5`）优化分段行为，短句不易误切，长句自然分段；段落颜色改为彩虹渐变序列，相邻段落颜色更协调
 - **v2.4 — 流式输出**：翻译生成时每 2 个 token 实时推送到 UI（JNI 回调），打字机效果逐步显示，视觉响应大幅提升
 - **v2.3 — Vosk 原生分段 + 小模型默认**：移除自定义断句规则和 partial 稳定性确认，改用 Vosk 原生 VAD 分段，段落语义完整性更好；ASR 默认切换至 vosk-model-small-ru-0.22（50MB），加载速度大幅提升，清晰语音场景识别准确率与大模型（1.8GB）几乎无差别

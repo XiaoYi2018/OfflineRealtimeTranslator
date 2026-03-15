@@ -44,10 +44,35 @@
 - `app/src/main/cpp/vulkan-headers/` — 下载的 Vulkan C++ 头文件，已不使用
 - `app/src/main/cpp/host-toolchain.cmake` — 用 TDM-GCC 编译 vulkan-shaders-gen 的工具链
 
-### 2.2 GPU 加速替代方案 — 待研究
+### 2.2 OpenCL GPU 加速 — v2.6 已成功
 
-- **OpenCL**：LLM-HUB 项目在 Adreno 上用 MediaPipe/LiteRT + OpenCL 成功运行 LLM。llama.cpp 有 `GGML_OPENCL` 后端，值得尝试
-- **不要再尝试 Vulkan**
+llama.cpp 有完整 OpenCL 后端（12,544 行 C++ + 98 个 kernel），Adreno 830 为一等公民。
+
+**编译配置**（`CMakeLists.txt`）：
+```cmake
+set(GGML_OPENCL ON CACHE BOOL "" FORCE)
+set(GGML_OPENCL_USE_ADRENO_KERNELS ON CACHE BOOL "" FORCE)
+set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
+```
+
+**编译依赖**：
+1. OpenCL Headers — `git clone https://github.com/KhronosGroup/OpenCL-Headers.git` 放到 `app/src/main/cpp/OpenCL-Headers/`
+2. libOpenCL.so — 从手机 `adb pull /system/vendor/lib64/libOpenCL.so` 放到 `app/src/main/cpp/libOpenCL.so`（仅编译时链接用）
+3. Python3 — 用于 `embed_kernel.py` 将 .cl 内核嵌入二进制
+4. 自定义 `cmake/FindOpenCL.cmake` 和 `cmake/FindPython3.cmake` 绕过 Android NDK 交叉编译时的 `find_package` 问题
+
+**关键踩坑**：
+- `libOpenCL.so` **不能打包进 APK**（否则 dlopen 时因 `libcutils.so` 找不到而崩溃）。在 `build.gradle.kts` 中排除：`jniLibs { excludes += "**/libOpenCL.so" }`
+- `AndroidManifest.xml` 中必须声明 `<uses-native-library android:name="libOpenCL.so" android:required="false" />`（放在 `<application>` 标签内），运行时从系统 vendor 路径加载
+- **不要再尝试 Vulkan**（Adreno Vulkan compute shader 不兼容 llama.cpp）
+
+**性能对比**（骁龙 8 Elite / Adreno 830）：
+
+| 指标 | CPU（v2.5） | OpenCL GPU（v2.6） | 提升 |
+|------|-----------|-------------------|------|
+| 生成速度 | ~8-10 tok/s | ~11-14 tok/s | +40% |
+| Prompt 处理 | ~700ms-3s | ~550ms-1.7s | 更快 |
+| 发热 | 严重，降频到 1.5 tok/s | 大幅改善，可持续运行 | 最大收益 |
 
 ### 2.3 并行加载模型 — 实测更慢
 
@@ -131,13 +156,13 @@ Vosk 基于 Kaldi，模型目录下 `conf/model.conf` 可直接控制解码和 e
 
 ---
 
-## 3. 当前架构（v2.3）
+## 3. 当前架构（v2.6）
 
 ```
-麦克风 → Vosk ASR（vosk-model-small-ru-0.22，原生 VAD 分段）
+麦克风 → Vosk ASR（vosk-model-small-ru-0.22，原生 VAD 分段 + min-utterance-length=2.5）
        → vosk-recasepunc（ONNX，标点/大小写恢复）
-       → Gemma 3 4B-IT（llama.cpp，Q4_K_M，纯 CPU，KV Cache 前缀复用）
-       → 彩色对照 UI
+       → Gemma 3 4B-IT（llama.cpp，Q4_K_M，OpenCL GPU Adreno 830，KV Cache 前缀复用）
+       → 流式 token 回调 → 彩色对照 UI（彩虹渐变 10 色）
 ```
 
 **KV Cache 前缀复用**：
@@ -149,7 +174,9 @@ Vosk 基于 Kaldi，模型目录下 `conf/model.conf` 可直接控制解码和 e
 | 文件 | 作用 |
 |------|------|
 | `app/src/main/cpp/llama_jni.cpp` | JNI 层，KV Cache 前缀复用 + 流式 token 回调 |
-| `app/src/main/cpp/CMakeLists.txt` | llama.cpp 编译配置（Vulkan/OpenCL 均 OFF） |
+| `app/src/main/cpp/CMakeLists.txt` | llama.cpp 编译配置（OpenCL ON，Vulkan OFF） |
+| `app/src/main/cpp/cmake/FindOpenCL.cmake` | 自定义 OpenCL 查找（Android 交叉编译用） |
+| `app/src/main/cpp/cmake/FindPython3.cmake` | 自定义 Python3 查找（kernel 嵌入用） |
 | `MainActivity.kt` | 主管线调度，Vosk → Recasepunc → 翻译 |
 | `SentenceSegmenter.kt` | 自定义分段（v2.3 已注释，保留备用） |
 | `VoskAsrManager.kt` | Vosk 封装 |
@@ -160,23 +187,29 @@ Vosk 基于 Kaldi，模型目录下 `conf/model.conf` 可直接控制解码和 e
 
 ## 4. 后续升级路线
 
-### 4.1 流式输出（优先级：高）
-还原 LLM 逐字输出效果，参考 `D:\AndroidWorkspace\OfflineTranslator` 实现。
-考虑 2-4 字一批输出，减少 UI 刷新开销。视觉上加速用户体验。
+### 4.1 流式输出 ✅（v2.4 已完成）
 
-### 4.2 ASR 模型切换按钮（优先级：中）
+### 4.2 Vosk 分段参数调优 ✅（v2.5 已完成，见 2.8）
+
+### 4.3 OpenCL GPU 加速 ✅（v2.6 已完成，见 2.2）
+
+### 4.4 ASR 模型切换按钮（优先级：中，待做）
 主界面加按钮，默认小模型，一键切换大模型。检测手机上已有的模型，有大模型才显示切换。
 
-### 4.3 OpenCL GPU 加速（优先级：中）
-研究 llama.cpp 的 `GGML_OPENCL` 后端在 Adreno 上的兼容性。
-参考 LLM-HUB 项目（GitHub 可搜到，也在 Google Play 上架）。
+### 4.5 Vosk 参数继续调优（优先级：中，待做）
+继续微调 endpoint 规则和解码参数，提升候选段落长度稳定性及个别单词识别精准度。
+注意：beam/lattice-beam/max-active 与 endpoint 规则互相影响（见 2.8），需谨慎逐个测试。
 
-### 4.4 Vosk 分段参数调优（已完成，见 2.8）
-通过 `conf/model.conf` 的 Kaldi endpointer 参数控制分段行为，v2.5 已调优。
+### 4.6 翻译 prompt 优化（优先级：低，待做）
+当前 Gemma 极偶尔输出半句英语（约每 5-10 段一次），可尝试在 prompt 中用中文强调"只输出中文"。
 
-### 4.5 翻译模型探索（优先级：低）
+### 4.7 翻译模型探索（优先级：低）
 - 更大模型（Gemma 12B）可能提升翻译质量，但手机内存和速度是瓶颈
 - 更小模型（Gemma 1B）速度快很多，质量差一些但可能对简短句子够用
+
+### 4.8 产品功能（GPU 确定后）
+- 翻译历史记录功能
+- 其他产品设计待定
 
 ---
 
@@ -256,3 +289,24 @@ Vosk 基于 Kaldi，模型目录下 `conf/model.conf` 可直接控制解码和 e
   - 调大 beam/lattice-beam/max-active：候选又变成大段落，endpoint 规则失效，已还原
 - **最终配置**：解码参数保持原始值，只加 `--endpoint.rule2.min-utterance-length=2.5`
 - **重要发现**：解码参数和 endpoint 规则互相影响，不能独立调整。识别精准度不应通过调 beam 解决
+
+### v2.6 — OpenCL GPU 加速（Adreno 830）
+- **启用 GGML_OPENCL 后端**：llama.cpp 内置完整 OpenCL 后端（12,544 行 C++ + 98 个 kernel），Adreno 830 为一等公民，有专用优化 kernel（noshuffle GEMV/GEMM）
+- **编译环境搭建**：
+  - 下载 KhronosGroup/OpenCL-Headers 到 `app/src/main/cpp/OpenCL-Headers/`
+  - 从手机 `adb pull /system/vendor/lib64/libOpenCL.so` 作为编译时链接 stub
+  - 编写自定义 `cmake/FindOpenCL.cmake` 和 `cmake/FindPython3.cmake` 绕过 NDK 交叉编译限制
+- **关键踩坑 — libOpenCL.so 不能打包进 APK**：
+  - 现象：App 闪退，`dlopen failed: library "libcutils.so" not found: needed by libOpenCL.so`
+  - 原因：从手机 pull 的 libOpenCL.so 被打包进 APK，运行时加载 APK 内副本而非系统库，该副本依赖 `libcutils.so`（系统内部库，app namespace 不可见）
+  - 修复：`build.gradle.kts` 中 `jniLibs { excludes += "**/libOpenCL.so" }`
+- **AndroidManifest 声明**：`<uses-native-library android:name="libOpenCL.so" android:required="false" />`（必须放在 `<application>` 标签内，不是 `<manifest>`）
+- **性能对比**（骁龙 8 Elite / Adreno 830）：
+
+  | 指标 | CPU（v2.5） | OpenCL GPU（v2.6） | 提升 |
+  |------|-----------|-------------------|------|
+  | 生成速度 | ~8-10 tok/s | ~11-14 tok/s | +40% |
+  | Prompt 处理 | ~700ms-3s | ~550ms-1.7s | 更快 |
+  | 发热 | 严重，降频到 1.5 tok/s | 大幅改善，可持续运行 | 最大收益 |
+
+- **已知问题**：Gemma 4B 极偶尔输出日语/英语（约每 10-15 段一次），属于多语言模型幻觉，后续通过 prompt 优化解决

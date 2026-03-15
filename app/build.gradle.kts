@@ -53,6 +53,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            excludes += "**/libOpenCL.so"
         }
     }
     // Prevent Gradle from compressing model weight files.
