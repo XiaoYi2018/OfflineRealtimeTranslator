@@ -8,7 +8,45 @@
     <string name="label_chinese">中文翻译</string>
     <string name="btn_start">开始监听</string>
     <string name="btn_stop">停止监听</string>
-    <string name="hint_russian">等待语音输入...</string>
+    <string name="hint_russian">Ожидание голосового ввода...</string>
     <string name="hint_chinese">翻译结果将显示在此处...</string>
     <string name="permission_denied">需要麦克风权限才能使用语音识别</string>
+    <string name="scroll_to_bottom">滚动到底部</string>
+    <string name="history_title">翻译历史</string>
+    <string name="favorites_title">收藏</string>
+    <string name="tab_history">历史记录</string>
+    <string name="tab_favorites">收藏</string>
+    <string name="back">返回</string>
+    <string name="export">导出</string>
+    <string name="copy">复制</string>
+    <string name="multi_select">多选</string>
+    <string name="delete_selected">删除选中</string>
+    <string name="select_all">全选</string>
+    <string name="no_history">暂无记录</string>
+    <string name="cleanup_label">清理:</string>
+    <string name="export_success">已导出到 Download 文件夹</string>
+    <string name="export_empty">没有可导出的记录</string>
+    <string name="delete_confirm">确认删除 %d 条记录？</string>
+    <string name="deleted_count">已删除 %d 条记录</string>
+    <string name="cleanup_confirm">确认清理 %s 的记录？</string>
+    <string name="cleaned_count">已清理完成</string>
+
+    <string-array name="time_range_options">
+        <item>全部</item>
+        <item>最近一周</item>
+        <item>最近一月</item>
+    </string-array>
+
+    <string-array name="sort_options">
+        <item>排序</item>
+        <item>最新优先</item>
+        <item>最早优先</item>
+    </string-array>
+
+    <string-array name="cleanup_options">
+        <item>清理</item>
+        <item>一周前</item>
+        <item>一月前</item>
+        <item>一年前</item>
+    </string-array>
 </resources>

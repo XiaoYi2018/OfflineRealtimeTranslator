@@ -1,6 +1,7 @@
 package com.bohanli.ruzhtranslator
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
@@ -17,7 +18,9 @@ import com.bohanli.ruzhtranslator.asr.VoskAsrManager
 import com.bohanli.ruzhtranslator.core.AppStatus
 import com.bohanli.ruzhtranslator.core.ModelManager
 import com.bohanli.ruzhtranslator.databinding.ActivityMainBinding
-// import com.bohanli.ruzhtranslator.segmentation.SentenceSegmenter  // v2.3: bypassed
+import com.bohanli.ruzhtranslator.history.AppDatabase
+import com.bohanli.ruzhtranslator.history.HistoryActivity
+import com.bohanli.ruzhtranslator.history.TranslationRecord
 import com.bohanli.ruzhtranslator.translation.GemmaTranslator
 import com.bohanli.ruzhtranslator.translation.TranslationQueue
 import kotlinx.coroutines.CoroutineScope
@@ -35,33 +38,35 @@ class MainActivity : AppCompatActivity() {
         private const val MODEL_RECASEPUNC = "vosk-recasepunc-ru-0.22"
         private const val MODEL_GEMMA      = "gemma-3-4b-it-Q4_K_M"
 
-        // Bright colors visible on dark backgrounds, cycling per segment
+        // 16 bright rainbow colors for dark backgrounds, no white
         private val SEGMENT_COLORS = intArrayOf(
             Color.parseColor("#FFFF6666"), // red
+            Color.parseColor("#FFFF8855"), // red-orange
             Color.parseColor("#FFFF9944"), // orange
+            Color.parseColor("#FFFFBB44"), // amber
             Color.parseColor("#FFFFDD55"), // yellow
+            Color.parseColor("#FFCCEE55"), // yellow-green
             Color.parseColor("#FF80FF80"), // green
+            Color.parseColor("#FF44FFBB"), // emerald
             Color.parseColor("#FF44FFDD"), // teal
-            Color.parseColor("#FF66CCFF"), // sky blue
+            Color.parseColor("#FF44DDFF"), // cyan
+            Color.parseColor("#FF66BBFF"), // sky blue
+            Color.parseColor("#FF8899FF"), // blue
+            Color.parseColor("#FFAA88FF"), // indigo
             Color.parseColor("#FFCC88FF"), // purple
-            Color.parseColor("#FFDDAAFF"), // lavender
-            Color.parseColor("#FFFF80C0"), // pink
-            Color.parseColor("#FFFFFFFF"), // white
+            Color.parseColor("#FFFF80CC"), // magenta
+            Color.parseColor("#FFFF80A0"), // pink
         )
-
     }
 
     private lateinit var binding: ActivityMainBinding
 
-    // All coroutines anchored to Main scope; withContext(IO) for heavy work
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // Core components – initialised asynchronously in loadModels()
     private var voskAsr: VoskAsrManager? = null
     private var recasepunc: RecasepuncProcessor? = null
     private var gemmaTranslator: GemmaTranslator? = null
     private var translationQueue: TranslationQueue? = null
-    // private val segmenter = SentenceSegmenter()  // v2.3: bypassed, using Vosk native segmentation
 
     @Volatile private var isListening = false
     private var lastPartial = ""
@@ -69,7 +74,13 @@ class MainActivity : AppCompatActivity() {
     // Segment lists for colored display
     private val russianSegments = mutableListOf<String>()
     private val chineseSegments = mutableListOf<String>()
-    private var segmentColorIndex = 0
+
+    // Smart auto-scroll: track whether user has manually scrolled up
+    private var autoScrollRussian = true
+    private var autoScrollChinese = true
+
+    // Database
+    private val db by lazy { AppDatabase.getInstance(this) }
 
     private val requestMicPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -92,6 +103,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Save synchronously before canceling scope
+        saveSessionToHistorySync()
         isListening = false
         voskAsr?.release()
         translationQueue?.shutdown()
@@ -105,9 +118,62 @@ class MainActivity : AppCompatActivity() {
     // -------------------------------------------------------------------------
 
     private fun setupUi() {
+        // Start/Stop circular button
         binding.btnStartStop.isEnabled = false
+        binding.btnStartStop.alpha = 0.4f
         binding.btnStartStop.setOnClickListener {
             if (isListening) stopListening() else requestMic()
+        }
+
+        // History button → open history tab
+        binding.btnHistory.setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java)
+                .putExtra("tab", 0))
+        }
+
+        // Favorites button → open favorites tab
+        binding.btnFavorites.setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java)
+                .putExtra("tab", 1))
+        }
+
+        // Scroll-to-bottom buttons
+        binding.btnScrollBottomRu.setOnClickListener {
+            binding.scrollViewRussian.fullScroll(View.FOCUS_DOWN)
+            autoScrollRussian = true
+            binding.btnScrollBottomRu.visibility = View.GONE
+        }
+        binding.btnScrollBottomZh.setOnClickListener {
+            binding.scrollViewChinese.fullScroll(View.FOCUS_DOWN)
+            autoScrollChinese = true
+            binding.btnScrollBottomZh.visibility = View.GONE
+        }
+
+        // Smart scroll: detect when user scrolls away from bottom
+        setupSmartScroll(binding.scrollViewRussian, { autoScrollRussian },
+            { autoScrollRussian = it }, binding.btnScrollBottomRu)
+        setupSmartScroll(binding.scrollViewChinese, { autoScrollChinese },
+            { autoScrollChinese = it }, binding.btnScrollBottomZh)
+    }
+
+    private fun setupSmartScroll(
+        scrollView: android.widget.ScrollView,
+        getAutoScroll: () -> Boolean,
+        setAutoScroll: (Boolean) -> Unit,
+        scrollBtn: View
+    ) {
+        scrollView.setOnScrollChangeListener { v, _, scrollY, _, _ ->
+            val sv = v as android.widget.ScrollView
+            val child = sv.getChildAt(0) ?: return@setOnScrollChangeListener
+            val atBottom = scrollY + sv.height >= child.height - 50
+            if (atBottom) {
+                setAutoScroll(true)
+                scrollBtn.visibility = View.GONE
+            } else if (getAutoScroll()) {
+                // User scrolled up manually
+                setAutoScroll(false)
+                scrollBtn.visibility = View.VISIBLE
+            }
         }
     }
 
@@ -135,7 +201,7 @@ class MainActivity : AppCompatActivity() {
                     onError       = { msg  -> updateStatus(AppStatus.Error(msg)) }
                 )
                 updateStatus(AppStatus.Loading("初始化语音识别引擎..."))
-                asr.initialize()   // suspend, runs on IO
+                asr.initialize()
                 voskAsr = asr
 
                 // ---- Recasepunc (optional) ----
@@ -171,8 +237,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 )
 
-                updateStatus(AppStatus.Ready)
+                // Enable button and auto-start listening
                 binding.btnStartStop.isEnabled = true
+                binding.btnStartStop.alpha = 0.75f
+                requestMic()
 
             } catch (e: Exception) {
                 Log.e(TAG, "Model loading failed", e)
@@ -201,7 +269,6 @@ class MainActivity : AppCompatActivity() {
         val queue = translationQueue
 
         mainScope.launch {
-            // Recasepunc then send directly to translation — no custom segmentation
             val processed = withContext(Dispatchers.IO) {
                 val result = rcp?.takeIf { it.isAvailable() }?.process(rawText) ?: rawText
                 Log.d(TAG, "Recasepunc: in=[$rawText] out=[$result] available=${rcp?.isAvailable()}")
@@ -232,18 +299,20 @@ class MainActivity : AppCompatActivity() {
         val asr = voskAsr ?: run {
             updateStatus(AppStatus.Error("语音识别引擎未就绪")); return
         }
-        // segmenter.reset()  // v2.3: bypassed
+        // Save previous session before starting a new one
+        saveSessionToHistory()
         isListening = true
         asr.startListening()
         updateStatus(AppStatus.Listening)
-        binding.btnStartStop.text = getString(R.string.btn_stop)
+        // Switch to red stop icon
+        binding.btnStartStop.setImageResource(R.drawable.ic_stop_square)
+        binding.btnStartStop.setBackgroundResource(R.drawable.bg_circle_button_stop)
     }
 
     private fun stopListening() {
         isListening = false
         voskAsr?.stopListening()
 
-        // Send last partial as final if not empty
         if (lastPartial.isNotBlank()) {
             val text = lastPartial
             lastPartial = ""
@@ -253,7 +322,55 @@ class MainActivity : AppCompatActivity() {
         updateRussianDisplay()
 
         updateStatus(AppStatus.Ready)
-        binding.btnStartStop.text = getString(R.string.btn_start)
+        // Switch to green play icon
+        binding.btnStartStop.setImageResource(R.drawable.ic_play_arrow)
+        binding.btnStartStop.setBackgroundResource(R.drawable.bg_circle_button_start)
+    }
+
+    // -------------------------------------------------------------------------
+    // History persistence
+    // -------------------------------------------------------------------------
+
+    private fun saveSessionToHistory() {
+        if (russianSegments.isEmpty() && chineseSegments.isEmpty()) return
+        // Discard pending/in-flight translations from the old session
+        translationQueue?.clear()
+        streamingText.clear()
+        if (russianSegments.isNotEmpty() && chineseSegments.isNotEmpty()) {
+            val ruText = russianSegments.joinToString("\n")
+            val zhText = chineseSegments.joinToString("\n")
+            mainScope.launch {
+                withContext(Dispatchers.IO) {
+                    db.translationDao().insert(
+                        TranslationRecord(ruText = ruText, zhText = zhText)
+                    )
+                }
+                Log.d(TAG, "Session saved to history: ${russianSegments.size} ru, ${chineseSegments.size} zh")
+            }
+        }
+        russianSegments.clear()
+        chineseSegments.clear()
+        binding.tvRussianHistory.text = ""
+        binding.tvChineseHistory.text = ""
+    }
+
+    /** Synchronous version for onDestroy — runs on calling thread. */
+    private fun saveSessionToHistorySync() {
+        if (russianSegments.isEmpty() || chineseSegments.isEmpty()) return
+        val ruText = russianSegments.joinToString("\n")
+        val zhText = chineseSegments.joinToString("\n")
+        try {
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                db.translationDao().insert(
+                    TranslationRecord(ruText = ruText, zhText = zhText)
+                )
+            }
+            Log.d(TAG, "Session saved to history (sync): ${russianSegments.size} segments")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save session on destroy", e)
+        }
+        russianSegments.clear()
+        chineseSegments.clear()
     }
 
     // -------------------------------------------------------------------------
@@ -271,7 +388,6 @@ class MainActivity : AppCompatActivity() {
     private fun updateRussianDisplay(partial: String = "") {
         val ssb = SpannableStringBuilder()
 
-        // Committed segments with colors
         for ((i, seg) in russianSegments.withIndex()) {
             if (ssb.isNotEmpty()) ssb.append("\n")
             val start = ssb.length
@@ -280,7 +396,6 @@ class MainActivity : AppCompatActivity() {
             ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-        // Current partial (gray, in-progress recognition)
         if (partial.isNotEmpty()) {
             if (ssb.isNotEmpty()) ssb.append("\n")
             val start = ssb.length
@@ -289,26 +404,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.tvRussianHistory.text = ssb
-        binding.scrollViewRussian.post {
-            binding.scrollViewRussian.fullScroll(View.FOCUS_DOWN)
+        if (autoScrollRussian) {
+            binding.scrollViewRussian.post {
+                binding.scrollViewRussian.fullScroll(View.FOCUS_DOWN)
+            }
         }
     }
 
-    // Streaming state: current segment being streamed
+    // Streaming state
     private var streamingText = StringBuilder()
 
-    /** Called when a new translation starts streaming. */
     private fun startChineseStream() {
         streamingText.clear()
     }
 
-    /** Called for each streamed token chunk (every 2 tokens). */
     private fun appendStreamToken(token: String) {
         streamingText.append(token)
         updateChineseDisplay(streamingText.toString())
     }
 
-    /** Called when translation is fully complete — replaces streamed text with final result. */
     private fun finalizeChinese(text: String) {
         streamingText.clear()
         chineseSegments.add(text)
@@ -318,7 +432,6 @@ class MainActivity : AppCompatActivity() {
     private fun updateChineseDisplay(streaming: String?) {
         val ssb = SpannableStringBuilder()
 
-        // Completed segments
         for ((i, seg) in chineseSegments.withIndex()) {
             if (ssb.isNotEmpty()) ssb.append("\n")
             val start = ssb.length
@@ -327,7 +440,6 @@ class MainActivity : AppCompatActivity() {
             ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-        // Currently streaming segment (same color as next segment would have)
         if (streaming != null && streaming.isNotEmpty()) {
             if (ssb.isNotEmpty()) ssb.append("\n")
             val start = ssb.length
@@ -337,8 +449,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.tvChineseHistory.text = ssb
-        binding.scrollViewChinese.post {
-            binding.scrollViewChinese.fullScroll(View.FOCUS_DOWN)
+        if (autoScrollChinese) {
+            binding.scrollViewChinese.post {
+                binding.scrollViewChinese.fullScroll(View.FOCUS_DOWN)
+            }
         }
     }
 }

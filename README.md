@@ -7,19 +7,30 @@
 ```
 麦克风 → Vosk ASR（俄语语音识别）
        → vosk-recasepunc（标点/大小写恢复）
-       → 句子分段器（俄语连接词智能断句）
-       → Gemma 3 4B-IT（llama.cpp，俄→中翻译）
-       → 彩色对照 UI 显示
+       → Gemma 3 4B-IT（llama.cpp，OpenCL GPU 加速，俄→中翻译）
+       → 流式彩色对照 UI（16 色彩虹渐变）
+       → Room 数据库（翻译历史 + 收藏管理）
 ```
 
 ## 界面
 
+### 主界面
 - 顶部状态栏：显示当前 App 状态（加载中/监听中/翻译中）
-- 开始/停止按钮
-- 俄语识别区（可滚动）：实时 ASR 输出，已定稿文本彩色显示，缓冲区灰色
-- 中文翻译区（可滚动）：翻译结果，与对应俄语段落颜色一致
+- 俄语识别区（上半屏，可滚动）：实时 ASR 输出，已定稿文本彩色显示，缓冲区灰色
+- 中文翻译区（下半屏，可滚动）：流式打字机效果显示翻译结果，与对应俄语段落颜色一致
+- 中间控制栏：收藏按钮（进入收藏界面）、历史按钮（进入历史界面）、半透明圆形开始/停止按钮
+- 智能自动滚动：用户手动上滚时暂停自动滚动并显示"滚动到底部"按钮
 
-**彩色对照功能**：每个俄语文本段和对应的中文翻译使用相同颜色，相邻段落颜色不同（10色循环），方便一眼看出翻译对应关系。
+**彩色对照功能**：每个俄语段落和对应的中文翻译使用相同颜色，16 色彩虹渐变循环（无白色），一眼看出翻译对应关系。
+
+### 历史/收藏界面
+- 底部双 tab 切换（收藏 | 历史），显示各自条目数量
+- 顶部筛选栏：时间范围、排序、清理、多选
+- 条目卡片：左侧星标（一键收藏/取消）、标题（时间+中文缩略）、中俄文预览
+- 多选模式：批量删除、导出、复制、收藏，支持全选
+- 单击查看详情（完整文本 + 复制/导出按钮），长按重命名
+- 智能删除：历史和收藏独立管理，同一条目可同时存在于两个列表
+- 导出为 UTF-8 文本文件到系统 Download 文件夹
 
 ## 硬件要求
 
@@ -27,7 +38,7 @@
 - Android 10+（API 29）
 - **8GB+ 内存**（推荐 16GB）
 - 约 5GB 存储空间用于模型文件
-- 推荐骁龙 8 系列或同等性能芯片
+- 推荐骁龙 8 系列或同等性能芯片（支持 OpenCL GPU 加速）
 
 ## 模型文件（不包含在仓库中）
 
@@ -40,7 +51,7 @@
 | vosk-recasepunc-ru-0.22 | ~680MB | 标点/大小写恢复 | [Vosk Models](https://alphacephei.com/vosk/models) |
 | gemma-3-4b-it-Q4_K_M | ~2.5GB | 俄→中翻译引擎 | 见下方 |
 
-> **ASR 模型对比**：经实测，小模型（50MB）与大模型（1.8GB）在清晰语音（新闻、会议、演讲）场景下识别准确率几乎无差别，但加载速度快数十倍。大模型优势在噪音环境/方言/口齿不清场景。默认使用小模型，后续版本将支持 UI 一键切换。
+> **ASR 模型对比**：经实测，小模型（50MB）与大模型（1.8GB）在清晰语音（新闻、会议、演讲）场景下识别准确率几乎无差别，但加载速度快数十倍。大模型优势在噪音环境/方言/口齿不清场景。默认使用小模型。
 
 ### 下载 Gemma 翻译模型
 
@@ -71,16 +82,20 @@ $dest = "/sdcard/Android/data/com.bohanli.ruzhtranslator/files/models"
 5. 点击绿色运行按钮
 6. 首次编译会编译 llama.cpp（约 5-10 分钟），后续增量编译很快
 
+> **注意**：AGP 9.1.0 内置 Kotlin，不需要额外添加 kotlin-android 插件。`gradle.properties` 中需要 `android.disallowKotlinSourceSets=false` 以支持 KSP。
+
 ## 项目结构
 
 ```
 app/src/main/
   cpp/
     llama_jni.cpp               # JNI 桥接层（llama.cpp ↔ Kotlin）
-    CMakeLists.txt              # CMake 构建配置
+    CMakeLists.txt              # CMake 构建配置（OpenCL ON）
     llama.cpp/                  # llama.cpp 子模块（git submodule）
+    cmake/                      # 自定义 FindOpenCL / FindPython3
+    OpenCL-Headers/             # KhronosGroup OpenCL 头文件
   java/.../
-    MainActivity.kt             # 主界面 + 管线调度 + 彩色对照显示
+    MainActivity.kt             # 主界面 + 管线调度 + 彩色对照 + 会话保存
     asr/
       VoskAsrManager.kt         # Vosk 语音识别封装
       RecasepuncProcessor.kt    # ONNX 标点/大小写恢复
@@ -88,22 +103,37 @@ app/src/main/
       ModelManager.kt           # 模型路径管理
       AppStatus.kt              # UI 状态定义
     segmentation/
-      SentenceSegmenter.kt      # 5 规则智能断句（标点/逗号/连接词/暂停/强制）
+      SentenceSegmenter.kt      # 5 规则智能断句（已注释，保留备用）
     translation/
       GemmaTranslator.kt        # Gemma 翻译器 Kotlin 封装
-      TranslationQueue.kt       # 后台翻译队列（保序）
+      TranslationQueue.kt       # 后台翻译队列（保序 + generation counter）
+    history/
+      TranslationRecord.kt      # Room 实体（双标志位：isHistory + isFavorite）
+      TranslationDao.kt         # Room DAO（历史/收藏分离查询 + 软删除）
+      AppDatabase.kt            # Room 数据库单例
+      HistoryAdapter.kt         # RecyclerView 适配器（星标 + 多选）
+      HistoryActivity.kt        # 历史/收藏管理界面
   res/layout/
-    activity_main.xml           # 界面布局（深色主题）
+    activity_main.xml           # 主界面布局（深色主题）
+    activity_history.xml        # 历史/收藏界面布局
+    item_history.xml            # 历史条目卡片布局
+    spinner_item.xml            # 深色主题 Spinner 收起样式
+    spinner_dropdown_item.xml   # 深色主题 Spinner 下拉样式
+  res/drawable/
+    bg_circle_button*.xml       # 圆形按钮背景（开始/停止状态）
+    ic_*.xml                    # 图标：播放、停止、箭头、历史、星标、导出、复制、删除、多选
 ```
 
 ## 核心技术细节
 
 - **翻译引擎**：llama.cpp 静态链接，通过 git submodule 集成，CMake add_subdirectory 编译
 - **量化格式**：Gemma 3 4B-IT Q4_K_M（约 2.5GB，4-bit 量化）
+- **OpenCL GPU 加速**（v2.6+）：llama.cpp 的 `GGML_OPENCL` 后端，Adreno 830 专用优化 kernel，生成速度 +40%，发热大幅降低
 - **KV Cache 前缀复用**：固定 prompt 前缀（翻译指令部分）在模型加载时预先解码并保存 KV 缓存快照，每次翻译调用时恢复快照而非重新解码，节省约 300-500ms/次
-- **流式输出**：翻译生成过程中每 2 个 token 通过 JNI 回调实时推送到 UI，打字机效果逐步显示翻译结果，视觉响应速度大幅提升
-- **分段策略**：v2.3 起使用 Vosk 原生 VAD 分段；v2.5 通过 model.conf 的 `min-utterance-length=2.5` 参数优化，短句不易误切，长句自然分段
-- **OpenCL GPU 加速**（v2.6）：llama.cpp 的 `GGML_OPENCL` 后端，Adreno 830 专用优化 kernel，生成速度 +40%，发热大幅降低
+- **流式输出**：翻译生成过程中每 2 个 token 通过 JNI 回调实时推送到 UI，打字机效果逐步显示翻译结果
+- **分段策略**：Vosk 原生 VAD 分段 + model.conf 的 `min-utterance-length=2.5` 参数优化
+- **翻译历史**（v3.0）：Room 数据库，双标志位设计（`isHistory`/`isFavorite`），支持独立管理、筛选、排序、批量操作、导出
+- **翻译队列 generation counter**：停止/重启监听时递增 generation，丢弃旧队列中残留的翻译结果，保证色块颜色匹配
 - **线程配置**：6 线程 + n_batch=512（prompt 批处理加速）
 - **JNI 命名**：包名中下划线 `ruzhtranslator` → JNI 中 `ruzhtranslator`
 - **Prompt 模板**：`<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
@@ -141,9 +171,22 @@ app/src/main/
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) — MIT
 - [Gemma](https://ai.google.dev/gemma) — Gemma Terms of Use
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) — MIT
+- [Room](https://developer.android.com/jetpack/androidx/releases/room) — Apache 2.0
 
 ## 版本历史
 
+- **v3.0 — 翻译历史 + 收藏 + UI 大改版**：
+  - 新增 Room 数据库翻译历史系统，双标志位设计（`isHistory`/`isFavorite`）支持历史和收藏独立管理
+  - 新增 HistoryActivity：底部双 tab（收藏/历史），时间筛选、排序、批量清理，多选操作（删除/导出/复制/收藏），详情对话框，条目重命名
+  - 每次开始新会话时自动保存上一次翻译记录，支持导出为 UTF-8 文本文件到 Download 文件夹
+  - 批量删除和清理操作需二次确认防误操作；未选中条目时操作按钮给出提示
+  - 主界面精简：移除分隔线和文字标签，收藏/历史按钮放大至 40dp，与开始按钮并列
+  - 彩色段落从 10 色扩展至 16 色彩虹渐变（无白色）
+  - 智能自动滚动：用户上滚暂停自动滚动，显示"滚动到底部"浮动按钮
+  - 翻译队列 generation counter 解决停止/重启后色块颜色不匹配问题
+  - 深色主题自定义 Spinner 样式（浅色文字 + 深色下拉背景）
+  - 俄语输入区提示语改为俄语 "Ожидание голосового ввода..."
+  - 编译兼容性：AGP 9.1.0 内置 Kotlin + KSP 2.1.0 + Room 2.7.1
 - **v2.6 — OpenCL GPU 加速**：启用 llama.cpp 的 `GGML_OPENCL` 后端，Adreno 830 专用优化 kernel。生成速度从 8-10 tok/s 提升至 11-14 tok/s（+40%），prompt 处理从 700ms-3s 降至 550ms-1.7s，发热大幅改善可持续运行。编译需要 KhronosGroup OpenCL Headers + 设备 libOpenCL.so stub
 - **v2.5 — Vosk 分段调优 + 颜色优化**：通过 model.conf 的 Kaldi endpointer 参数（`min-utterance-length=2.5`）优化分段行为，短句不易误切，长句自然分段；段落颜色改为彩虹渐变序列，相邻段落颜色更协调
 - **v2.4 — 流式输出**：翻译生成时每 2 个 token 实时推送到 UI（JNI 回调），打字机效果逐步显示，视觉响应大幅提升

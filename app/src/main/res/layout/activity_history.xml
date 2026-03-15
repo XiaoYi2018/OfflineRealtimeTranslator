@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FF121212"
+    tools:context=".history.HistoryActivity">
+
+    <!-- Top bar: back + title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#FF1E1E1E"
+        android:paddingHorizontal="8dp">
+
+        <ImageButton
+            android:id="@+id/btn_back"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_arrow_back"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/back" />
+
+        <TextView
+            android:id="@+id/tv_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/history_title"
+            android:textSize="16sp"
+            android:textColor="#FFFFFFFF"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+    <!-- Filter row: 全部 | 排序 | 清理 | 多选 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:background="#FF1A1A1A">
+
+        <Spinner
+            android:id="@+id/spinner_time_range"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:backgroundTint="#FFAAAAAA" />
+
+        <Spinner
+            android:id="@+id/spinner_sort"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:layout_marginStart="2dp"
+            android:backgroundTint="#FFAAAAAA" />
+
+        <Spinner
+            android:id="@+id/spinner_cleanup"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:layout_marginStart="2dp"
+            android:backgroundTint="#FFAAAAAA" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/btn_multi_select"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_select_all"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/multi_select" />
+    </LinearLayout>
+
+    <!-- Multi-select action bar (hidden by default) -->
+    <!-- Layout: [trash] [export] [copy] [favorite] [select-all checkbox] -->
+    <LinearLayout
+        android:id="@+id/bar_actions"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:background="#FF222222"
+        android:visibility="gone">
+
+        <!-- Delete (left) -->
+        <ImageButton
+            android:id="@+id/btn_action_delete"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_delete"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/delete_selected" />
+
+        <!-- Spacer -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- Export -->
+        <ImageButton
+            android:id="@+id/btn_action_export"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_export"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/export" />
+
+        <!-- Copy -->
+        <ImageButton
+            android:id="@+id/btn_action_copy"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_copy"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/copy" />
+
+        <!-- Favorite -->
+        <ImageButton
+            android:id="@+id/btn_action_favorite"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_star_outline"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/favorites_title" />
+
+        <!-- Spacer -->
+        <View
+            android:layout_width="16dp"
+            android:layout_height="1dp" />
+
+        <!-- Selected count -->
+        <TextView
+            android:id="@+id/tv_selected_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FF999999"
+            android:textSize="12sp"
+            android:layout_marginEnd="4dp" />
+
+        <!-- Select all checkbox (right) -->
+        <CheckBox
+            android:id="@+id/cb_select_all"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:buttonTint="#FFAAAAAA" />
+    </LinearLayout>
+
+    <!-- RecyclerView -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_view"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="8dp" />
+
+    <!-- Empty state -->
+    <TextView
+        android:id="@+id/tv_empty"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="@string/no_history"
+        android:textSize="15sp"
+        android:textColor="#FF666666"
+        android:visibility="gone" />
+
+    <!-- Bottom tab bar: Favorites | History -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="51dp"
+        android:orientation="horizontal"
+        android:background="#FF1E1E1E">
+
+        <TextView
+            android:id="@+id/tab_favorites"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/favorites_title"
+            android:textSize="14sp"
+            android:textColor="#FF888888"
+            android:background="?attr/selectableItemBackground" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#FF333333" />
+
+        <TextView
+            android:id="@+id/tab_history"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/history_title"
+            android:textSize="14sp"
+            android:textColor="#FFFFFFFF"
+            android:background="?attr/selectableItemBackground" />
+    </LinearLayout>
+
+</LinearLayout>

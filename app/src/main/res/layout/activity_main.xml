@@ -4,7 +4,6 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="12dp"
     android:background="#FF121212"
     tools:context=".MainActivity">
 
@@ -13,97 +12,148 @@
         android:id="@+id/tv_status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:textSize="13sp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:textSize="12sp"
         android:textColor="#FFAAAAAA"
         android:background="#FF1E1E1E"
         android:text="@string/status_loading"
         android:fontFamily="monospace"
-        android:maxLines="3" />
+        android:maxLines="2" />
 
-    <!-- Start/Stop button -->
-    <Button
-        android:id="@+id/btn_start_stop"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:layout_marginTop="8dp"
-        android:text="@string/btn_start"
-        android:enabled="false"
-        android:textSize="16sp"
-        style="@style/Widget.MaterialComponents.Button" />
-
-    <!-- Russian ASR section label -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="@string/label_russian"
-        android:textSize="11sp"
-        android:textColor="#FF888888"
-        android:textAllCaps="true"
-        android:letterSpacing="0.1" />
-
-    <!-- Russian recognition history (append-only, scrollable) -->
-    <ScrollView
-        android:id="@+id/scroll_view_russian"
+    <!-- Russian ASR area (top half) -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="4dp"
-        android:fillViewport="true">
-        <TextView
-            android:id="@+id/tv_russian_history"
+        android:layout_weight="1">
+
+        <ScrollView
+            android:id="@+id/scroll_view_russian"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="10dp"
-            android:textSize="17sp"
-            android:textColor="#FFDDEEFF"
-            android:background="#FF1A2030"
-            android:gravity="top"
-            android:hint="@string/hint_russian"
-            android:textColorHint="#FF446688"
-            tools:text="Привет мир" />
-    </ScrollView>
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+            <TextView
+                android:id="@+id/tv_russian_history"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:paddingBottom="32dp"
+                android:textSize="17sp"
+                android:textColor="#FFDDEEFF"
+                android:background="#FF1A2030"
+                android:gravity="top"
+                android:hint="@string/hint_russian"
+                android:textColorHint="#FF446688"
+                tools:text="Привет мир" />
+        </ScrollView>
 
-    <!-- Divider -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="4dp"
-        android:background="#FF333333" />
+        <!-- Scroll-to-bottom button (Russian) -->
+        <ImageButton
+            android:id="@+id/btn_scroll_bottom_ru"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="8dp"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_circle_button"
+            android:src="@drawable/ic_arrow_down"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/scroll_to_bottom"
+            android:alpha="0.6"
+            android:visibility="gone" />
+    </FrameLayout>
 
-    <!-- Chinese translation section label -->
-    <TextView
+    <!-- Divider area: favorites + history + start/stop button -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/label_chinese"
-        android:textSize="11sp"
-        android:textColor="#FF888888"
-        android:textAllCaps="true"
-        android:letterSpacing="0.1" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="2dp">
 
-    <!-- Chinese translation history (append-only, scrollable) -->
-    <ScrollView
-        android:id="@+id/scroll_view_chinese"
+        <!-- Favorites star icon -->
+        <ImageButton
+            android:id="@+id/btn_favorites"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_star_outline"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/favorites_title"
+            android:alpha="0.7" />
+
+        <!-- History clock icon -->
+        <ImageButton
+            android:id="@+id/btn_history"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_history_clock"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/history_title"
+            android:alpha="0.7" />
+
+        <!-- Spacer -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- Start/Stop circular button, right side -->
+        <ImageButton
+            android:id="@+id/btn_start_stop"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_circle_button_start"
+            android:src="@drawable/ic_play_arrow"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/btn_start"
+            android:alpha="0.75" />
+    </LinearLayout>
+
+    <!-- Chinese translation area (bottom half) -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="4dp"
-        android:fillViewport="true">
+        android:layout_weight="1">
 
-        <TextView
-            android:id="@+id/tv_chinese_history"
+        <ScrollView
+            android:id="@+id/scroll_view_chinese"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="10dp"
-            android:textSize="17sp"
-            android:textColor="#FFFFEECC"
-            android:background="#FF201A10"
-            android:gravity="top"
-            android:hint="@string/hint_chinese"
-            android:textColorHint="#FF886633"
-            tools:text="你好世界" />
-    </ScrollView>
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <TextView
+                android:id="@+id/tv_chinese_history"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:paddingBottom="32dp"
+                android:textSize="17sp"
+                android:textColor="#FFFFEECC"
+                android:background="#FF201A10"
+                android:gravity="top"
+                android:hint="@string/hint_chinese"
+                android:textColorHint="#FF886633"
+                tools:text="你好世界" />
+        </ScrollView>
+
+        <!-- Scroll-to-bottom button (Chinese) -->
+        <ImageButton
+            android:id="@+id/btn_scroll_bottom_zh"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="8dp"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_circle_button"
+            android:src="@drawable/ic_arrow_down"
+            android:scaleType="centerInside"
+            android:contentDescription="@string/scroll_to_bottom"
+            android:alpha="0.6"
+            android:visibility="gone" />
+    </FrameLayout>
 
 </LinearLayout>

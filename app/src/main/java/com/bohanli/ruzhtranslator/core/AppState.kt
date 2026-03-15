@@ -9,7 +9,7 @@ sealed class AppStatus {
 
     fun toDisplayString(): String = when (this) {
         is Loading -> "[加载] $message"
-        Ready -> "[就绪] 按下按钮开始监听"
+        Ready -> "[就绪] 点击按钮开始监听"
         Listening -> "[监听] 正在识别俄语..."
         Translating -> "[翻译] 正在翻译..."
         is Error -> "[错误] $message"
