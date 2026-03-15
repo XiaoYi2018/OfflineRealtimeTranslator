@@ -54,6 +54,8 @@ Three models must be manually pushed to the device:
 | gemma-3-4b-it-Q4_K_M | ~2.5 GB | RU→ZH translation engine | See below |
 
 > **ASR model comparison**: Empirical testing shows that the small model (50 MB) and the large model (1.8 GB) achieve nearly identical recognition accuracy for clear speech (news broadcasts, meetings, lectures), while the small model loads orders of magnitude faster. The large model's advantage lies in noisy environments, dialectal speech, and unclear articulation. The small model is used by default.
+>
+> **⚠ Warning**: Switching to the large ASR model at runtime is **not recommended**. The large model's `acceptWaveForm()` is extremely CPU-intensive (default `max-active=7000`, `beam=13.0`, `lattice-beam=6.0` vs. small model's `3000/10.0/2.0`) and starves the Gemma translation engine of CPU resources, causing translations to stall and the device to overheat. Even after reducing decoding parameters to match the small model, the large model's acoustic network itself consumes far more CPU per frame. Use the small model for normal operation.
 
 ### Downloading the Gemma Translation Model
 
@@ -170,6 +172,7 @@ Measured on Snapdragon 8 Elite (16 GB RAM):
 - Gemma 4B occasionally produces output in other languages (English/Japanese, roughly once every 10–15 segments) within Chinese translations
 - The small Vosk model occasionally merges two short words into one when the speaker stutters
 - The punctuation restoration model has limited effectiveness on speech fragments (capitalization restoration works correctly; punctuation prediction is weaker)
+- **Large Vosk model causes translation stalls**: The large ASR model (1.8 GB) consumes excessive CPU during real-time recognition, starving the Gemma translation engine and causing queue backlog, device overheating, and effective freezing. Reducing its decoding parameters does not resolve the issue — the acoustic network itself is too heavy for concurrent operation with LLM inference. Use the small model instead
 - Vulkan GPU backend is incompatible with Adreno (ErrorDeviceLost); OpenCL is used instead
 
 ## Licenses

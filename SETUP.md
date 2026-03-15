@@ -109,6 +109,15 @@ Attempted parallel loading of Vosk + Recasepunc + Gemma using `async`. Loading w
 
 Conclusion: For clear speech scenarios (news, meetings, lectures), the difference is negligible. The large model excels only in noisy, dialectal, or mumbled speech. **Small model is the default since v2.3.**
 
+**⚠ Large model CPU contention issue (confirmed v3.1)**:
+The large model's default decoding parameters (`max-active=7000`, `beam=13.0`, `lattice-beam=6.0`) are far heavier than the small model's (`3000/10.0/2.0`). Even after reducing these parameters to match the small model, the large model's acoustic network itself consumes excessive CPU per `acceptWaveForm()` call. When running concurrently with Gemma (6 threads + OpenCL GPU), the CPU is fully saturated, causing:
+- Gemma translation speed drops from ~11-14 tok/s to ~1-2 tok/s
+- Translation queue backs up indefinitely
+- Device overheats and throttles further
+- Stopping ASR immediately restores normal translation speed (confirming CPU contention)
+
+**Conclusion**: The large Vosk model is not viable for real-time concurrent use with LLM translation on current hardware. Potential future mitigations: throttle the audio loop (`delay` between frames), reduce Gemma thread count when large model is active, or offload Vosk to a dedicated thread pool with CPU affinity.
+
 ### 2.7 Thermal Throttling
 
 Prolonged operation causes severe CPU thermal throttling:
@@ -244,6 +253,13 @@ Microphone → Vosk ASR (small/large model switchable, native VAD segmentation +
 ### 4.6 Further Vosk Parameter Tuning (priority: medium, pending)
 Continue fine-tuning endpoint rules and decoding parameters to improve segment length consistency and word-level recognition accuracy.
 Note: beam/lattice-beam/max-active and endpoint rules interact (see Section 2.8); changes must be tested individually and carefully.
+
+### 4.9 Large Vosk Model CPU Contention Fix (priority: medium, pending)
+The large ASR model causes translation stalls due to CPU contention with Gemma (see Section 2.6). Possible approaches:
+- Throttle `audioLoop()`: add `delay(10-20ms)` after each `acceptWaveForm()` to yield CPU time to the translation engine
+- Dynamically reduce Gemma thread count (6→3) when large model is active
+- Assign Vosk and Gemma to separate thread pools with CPU core affinity
+- Combination of the above
 
 ### 4.7 Translation Prompt Optimization (priority: low, pending)
 Gemma occasionally outputs partial English (approximately once every 5-10 segments). A possible mitigation is to reinforce "output Chinese only" in the prompt using Chinese instructions.
