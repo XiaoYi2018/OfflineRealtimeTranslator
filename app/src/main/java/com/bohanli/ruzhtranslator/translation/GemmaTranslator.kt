@@ -25,11 +25,19 @@ class GemmaTranslator {
     }
 
     @Volatile private var nativeHandle: Long = 0L
+    @Volatile var onStreamToken: ((String) -> Unit)? = null
 
     private external fun nativeCreate(modelPath: String): Long
     private external fun nativeTranslate(handle: Long, text: String): String
     private external fun nativeIsAvailable(handle: Long): Boolean
     private external fun nativeDestroy(handle: Long)
+
+    /** Called from JNI during generation — forwards token to listener. */
+    @Suppress("unused")
+    @androidx.annotation.Keep
+    fun onStreamToken(token: String) {
+        onStreamToken?.invoke(token)
+    }
 
     /** Initialize on an IO thread. Looks for *.gguf file in modelDir. */
     suspend fun initialize(modelDir: File) = withContext(Dispatchers.IO) {

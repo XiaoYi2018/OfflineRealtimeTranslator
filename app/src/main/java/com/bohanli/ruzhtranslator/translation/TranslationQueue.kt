@@ -22,6 +22,8 @@ import kotlinx.coroutines.withContext
 class TranslationQueue(
     private val translator: GemmaTranslator,
     private val onResult: (String) -> Unit,
+    private val onStreamToken: (String) -> Unit = {},
+    private val onStreamStart: () -> Unit = {},
     private val onBusyChanged: (busy: Boolean) -> Unit = {}
 ) {
     companion object {
@@ -36,11 +38,23 @@ class TranslationQueue(
         // Single consumer coroutine guarantees ordering
         scope.launch {
             for (text in channel) {
-                withContext(Dispatchers.Main) { onBusyChanged(true) }
+                withContext(Dispatchers.Main) {
+                    onBusyChanged(true)
+                    onStreamStart()
+                }
                 Log.i(TAG, "Translating: ${text.take(60)}...")
+
+                // Set up streaming callback before translation
+                translator.onStreamToken = { token ->
+                    scope.launch(Dispatchers.Main) { onStreamToken(token) }
+                }
+
                 val result = withContext(Dispatchers.IO) {
                     translator.translate(text)
                 }
+
+                translator.onStreamToken = null
+
                 Log.i(TAG, "Result: ${result.take(60)}")
                 withContext(Dispatchers.Main) {
                     onBusyChanged(false)

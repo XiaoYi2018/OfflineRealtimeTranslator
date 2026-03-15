@@ -162,7 +162,9 @@ class MainActivity : AppCompatActivity() {
                 // ---- Translation queue ----
                 translationQueue = TranslationQueue(
                     translator    = translator,
-                    onResult      = { result -> appendChinese(result) },
+                    onResult      = { result -> finalizeChinese(result) },
+                    onStreamToken = { token -> appendStreamToken(token) },
+                    onStreamStart = { startChineseStream() },
                     onBusyChanged = { busy ->
                         if (busy) updateStatus(AppStatus.Translating)
                         else if (isListening) updateStatus(AppStatus.Listening)
@@ -292,16 +294,45 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun appendChinese(text: String) {
-        chineseSegments.add(text)
+    // Streaming state: current segment being streamed
+    private var streamingText = StringBuilder()
 
+    /** Called when a new translation starts streaming. */
+    private fun startChineseStream() {
+        streamingText.clear()
+    }
+
+    /** Called for each streamed token chunk (every 2 tokens). */
+    private fun appendStreamToken(token: String) {
+        streamingText.append(token)
+        updateChineseDisplay(streamingText.toString())
+    }
+
+    /** Called when translation is fully complete — replaces streamed text with final result. */
+    private fun finalizeChinese(text: String) {
+        streamingText.clear()
+        chineseSegments.add(text)
+        updateChineseDisplay(null)
+    }
+
+    private fun updateChineseDisplay(streaming: String?) {
         val ssb = SpannableStringBuilder()
+
+        // Completed segments
         for ((i, seg) in chineseSegments.withIndex()) {
             if (ssb.isNotEmpty()) ssb.append("\n")
             val start = ssb.length
             ssb.append(seg)
-            // Same color index as the corresponding Russian segment
             val color = SEGMENT_COLORS[i % SEGMENT_COLORS.size]
+            ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        // Currently streaming segment (same color as next segment would have)
+        if (streaming != null && streaming.isNotEmpty()) {
+            if (ssb.isNotEmpty()) ssb.append("\n")
+            val start = ssb.length
+            ssb.append(streaming)
+            val color = SEGMENT_COLORS[chineseSegments.size % SEGMENT_COLORS.size]
             ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 

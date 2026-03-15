@@ -137,7 +137,7 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeCreate(
 
 JNIEXPORT jstring JNICALL
 Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
-        JNIEnv* env, jobject, jlong jHandle, jstring jText) {
+        JNIEnv* env, jobject thiz, jlong jHandle, jstring jText) {
 
     auto* lctx = reinterpret_cast<LlamaCtx*>(jHandle);
     if (!lctx || !lctx->model || !lctx->ctx) {
@@ -211,10 +211,19 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
         }
         auto t1 = std::chrono::steady_clock::now();
 
+        // Resolve streaming callback: GemmaTranslator.onStreamToken(String)
+        jclass clazz = env->GetObjectClass(thiz);
+        jmethodID streamMethod = env->GetMethodID(clazz, "onStreamToken", "(Ljava/lang/String;)V");
+        env->DeleteLocalRef(clazz);
+
         // Generate (short translations: 256 tokens max)
         const int max_gen = 256;
         std::string output;
         char piece_buf[128];
+        std::string stream_buf;       // accumulate tokens for batched streaming
+        int stream_token_count = 0;
+        const int STREAM_EVERY = 2;   // flush to UI every N tokens
+        bool leading_ws = true;       // track leading whitespace trimming
 
         for (int i = 0; i < max_gen; i++) {
             llama_token token = llama_sampler_sample(lctx->sampler, lctx->ctx, -1);
@@ -228,13 +237,50 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
             // Decode token to text
             int n = llama_token_to_piece(vocab, token, piece_buf, sizeof(piece_buf), 0, true);
             if (n > 0) {
-                output.append(piece_buf, n);
+                std::string piece(piece_buf, n);
+                output.append(piece);
+
                 // Stop if we hit end_of_turn marker (check AFTER append)
                 auto eot = output.find("<end_of_turn>");
                 if (eot != std::string::npos) {
+                    // Don't stream the <end_of_turn> part
                     output = output.substr(0, eot);
                     LOGI("end_of_turn at step %d", i);
+                    // Flush remaining stream buffer (minus any end_of_turn fragment)
+                    auto eot_in_buf = stream_buf.find("<end_of_turn>");
+                    if (eot_in_buf != std::string::npos) {
+                        stream_buf = stream_buf.substr(0, eot_in_buf);
+                    }
+                    if (streamMethod && !stream_buf.empty()) {
+                        jstring js = env->NewStringUTF(stream_buf.c_str());
+                        env->CallVoidMethod(thiz, streamMethod, js);
+                        env->DeleteLocalRef(js);
+                    }
+                    stream_buf.clear();
                     break;
+                }
+
+                // Skip leading whitespace for streaming
+                if (leading_ws) {
+                    auto first_non_ws = piece.find_first_not_of(" \t\n\r");
+                    if (first_non_ws != std::string::npos) {
+                        piece = piece.substr(first_non_ws);
+                        leading_ws = false;
+                    }
+                }
+
+                if (!leading_ws) {
+                    stream_buf.append(piece);
+                    stream_token_count++;
+
+                    // Flush every STREAM_EVERY tokens
+                    if (streamMethod && stream_token_count >= STREAM_EVERY) {
+                        jstring js = env->NewStringUTF(stream_buf.c_str());
+                        env->CallVoidMethod(thiz, streamMethod, js);
+                        env->DeleteLocalRef(js);
+                        stream_buf.clear();
+                        stream_token_count = 0;
+                    }
                 }
             }
 
@@ -244,6 +290,13 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
                 LOGE("Generation decode failed at step %d", i);
                 break;
             }
+        }
+
+        // Flush any remaining streamed tokens
+        if (streamMethod && !stream_buf.empty()) {
+            jstring js = env->NewStringUTF(stream_buf.c_str());
+            env->CallVoidMethod(thiz, streamMethod, js);
+            env->DeleteLocalRef(js);
         }
         auto t2 = std::chrono::steady_clock::now();
 
