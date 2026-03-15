@@ -8,6 +8,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -37,6 +38,10 @@ class TranslationQueue(
     // Generation counter: incremented on clear(), results from old generations are discarded
     private val generation = AtomicInteger(0)
 
+    // Pause support: consumer waits on resumeSignal when paused
+    private val paused = AtomicBoolean(false)
+    private var resumeSignal = Channel<Unit>(1)
+
     init {
         startConsumer()
     }
@@ -45,6 +50,16 @@ class TranslationQueue(
         scope.launch {
             for ((gen, text) in channel) {
                 // Skip items from old generations (queue was cleared)
+                if (gen != generation.get()) continue
+
+                // Wait if paused
+                if (paused.get()) {
+                    Log.i(TAG, "Consumer paused, waiting for resume...")
+                    resumeSignal.receive()
+                    Log.i(TAG, "Consumer resumed")
+                }
+
+                // Re-check generation after potential pause
                 if (gen != generation.get()) continue
 
                 val currentGen = gen
@@ -98,7 +113,24 @@ class TranslationQueue(
         Log.i(TAG, "Queue cleared, generation=${generation.get()}")
     }
 
+    /** Pause the consumer after the current translation finishes. */
+    fun pause() {
+        paused.set(true)
+        Log.i(TAG, "Queue paused")
+    }
+
+    /** Resume the consumer. */
+    fun resume() {
+        if (paused.compareAndSet(true, false)) {
+            resumeSignal.trySend(Unit)
+            Log.i(TAG, "Queue resumed")
+        }
+    }
+
     fun shutdown() {
+        // Resume consumer if paused so it can exit cleanly
+        paused.set(false)
+        resumeSignal.trySend(Unit)
         channel.close()
         scope.cancel()
     }

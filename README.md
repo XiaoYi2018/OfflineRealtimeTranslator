@@ -1,197 +1,211 @@
-# 俄中实时同声传译器
+# OfflineRealtimeTranslator
 
-完全离线的 Android 实时俄语→中文同声传译应用。无需网络，所有推理均在手机端完成。
+A fully offline Android application for real-time Russian-to-Chinese simultaneous interpretation. All inference runs entirely on-device with no network connection required.
 
-## 技术栈
+## Technology Stack
 
 ```
-麦克风 → Vosk ASR（俄语语音识别）
-       → vosk-recasepunc（标点/大小写恢复）
-       → Gemma 3 4B-IT（llama.cpp，OpenCL GPU 加速，俄→中翻译）
-       → 流式彩色对照 UI（16 色彩虹渐变）
-       → Room 数据库（翻译历史 + 收藏管理）
+Microphone → Vosk ASR (Russian speech recognition)
+           → vosk-recasepunc (punctuation & capitalization restoration)
+           → Gemma 3 4B-IT (llama.cpp, OpenCL GPU acceleration, RU→ZH translation)
+           → Streaming color-coded bilingual UI (16-color rainbow gradient)
+           → Room database (translation history + favorites management)
 ```
 
-## 界面
+## User Interface
 
-### 主界面
-- 顶部状态栏：显示当前 App 状态（加载中/监听中/翻译中）
-- 俄语识别区（上半屏，可滚动）：实时 ASR 输出，已定稿文本彩色显示，缓冲区灰色
-- 中文翻译区（下半屏，可滚动）：流式打字机效果显示翻译结果，与对应俄语段落颜色一致
-- 中间控制栏：收藏按钮（进入收藏界面）、历史按钮（进入历史界面）、半透明圆形开始/停止按钮
-- 智能自动滚动：用户手动上滚时暂停自动滚动并显示"滚动到底部"按钮
+### Main Screen
+- **Status bar** (top): Displays the current application state (loading / listening / translating)
+- **Russian recognition area** (upper half, scrollable): Real-time ASR output with finalized text shown in color and buffered text in gray
+- **Chinese translation area** (lower half, scrollable): Streaming typewriter-effect display of translation results, color-matched with corresponding Russian segments
+- **Control bar** (center): Favorite button, History button, Settings button (popup menu), Start/Stop button, Pause/Resume button
+- **Pause functionality**: When paused, ASR and the translation queue are suspended without terminating the current session; seamless resumption upon continue
+- **Settings menu**: Quick switching between large and small ASR models; access to the settings page
+- **Smart auto-scroll**: Auto-scrolling pauses when the user manually scrolls up, displaying a "Scroll to bottom" button
 
-**彩色对照功能**：每个俄语段落和对应的中文翻译使用相同颜色，16 色彩虹渐变循环（无白色），一眼看出翻译对应关系。
+**Color-coded alignment**: Each Russian segment and its corresponding Chinese translation share the same color from a 16-color rainbow gradient cycle (excluding white), providing an immediate visual mapping between source and target text.
 
-### 历史/收藏界面
-- 底部双 tab 切换（收藏 | 历史），显示各自条目数量
-- 顶部筛选栏：时间范围、排序、清理、多选
-- 条目卡片：左侧星标（一键收藏/取消）、标题（时间+中文缩略）、中俄文预览
-- 多选模式：批量删除、导出、复制、收藏，支持全选
-- 单击查看详情（完整文本 + 复制/导出按钮），长按重命名
-- 智能删除：历史和收藏独立管理，同一条目可同时存在于两个列表
-- 导出为 UTF-8 文本文件到系统 Download 文件夹
+### History & Favorites Screen
+- Bottom dual-tab navigation (Favorites | History) with entry counts displayed for each
+- Top filter bar: time range, sorting, cleanup, and multi-select
+- Entry cards: star icon on the left (one-tap favorite/unfavorite), title (timestamp + Chinese preview), Russian and Chinese text preview
+- Multi-select mode: batch delete, export, copy, and favorite operations with select-all support
+- Single tap to view details (full text with copy/export buttons); long press to rename
+- Independent management: history and favorites are managed separately; the same entry can exist in both lists simultaneously
+- Export as UTF-8 text files to the system Downloads folder
 
-## 硬件要求
+## Hardware Requirements
 
-- Android 手机 arm64-v8a 架构（基本所有现代安卓手机）
-- Android 10+（API 29）
-- **8GB+ 内存**（推荐 16GB）
-- 约 5GB 存储空间用于模型文件
-- 推荐骁龙 8 系列或同等性能芯片（支持 OpenCL GPU 加速）
+- Android phone with arm64-v8a architecture (virtually all modern Android devices)
+- Android 10+ (API 29)
+- **8 GB+ RAM** (16 GB recommended)
+- Approximately 5 GB of storage for model files
+- Snapdragon 8 series or equivalent SoC recommended (for OpenCL GPU acceleration)
 
-## 模型文件（不包含在仓库中）
+## Model Files (Not Included in Repository)
 
-三个模型需手动推送到手机：
+Three models must be manually pushed to the device:
 
-| 模型 | 大小 | 用途 | 下载地址 |
-|------|------|------|----------|
-| vosk-model-small-ru-0.22 | ~50MB | 俄语语音识别（默认，轻量） | [Vosk Models](https://alphacephei.com/vosk/models) |
-| vosk-model-ru-0.42 | ~1.8GB | 俄语语音识别（可选，大模型） | [Vosk Models](https://alphacephei.com/vosk/models) |
-| vosk-recasepunc-ru-0.22 | ~680MB | 标点/大小写恢复 | [Vosk Models](https://alphacephei.com/vosk/models) |
-| gemma-3-4b-it-Q4_K_M | ~2.5GB | 俄→中翻译引擎 | 见下方 |
+| Model | Size | Purpose | Download |
+|-------|------|---------|----------|
+| vosk-model-small-ru-0.22 | ~50 MB | Russian speech recognition (default, lightweight) | [Vosk Models](https://alphacephei.com/vosk/models) |
+| vosk-model-ru-0.42 | ~1.8 GB | Russian speech recognition (optional, large model) | [Vosk Models](https://alphacephei.com/vosk/models) |
+| vosk-recasepunc-ru-0.22 | ~680 MB | Punctuation & capitalization restoration | [Vosk Models](https://alphacephei.com/vosk/models) |
+| gemma-3-4b-it-Q4_K_M | ~2.5 GB | RU→ZH translation engine | See below |
 
-> **ASR 模型对比**：经实测，小模型（50MB）与大模型（1.8GB）在清晰语音（新闻、会议、演讲）场景下识别准确率几乎无差别，但加载速度快数十倍。大模型优势在噪音环境/方言/口齿不清场景。默认使用小模型。
+> **ASR model comparison**: Empirical testing shows that the small model (50 MB) and the large model (1.8 GB) achieve nearly identical recognition accuracy for clear speech (news broadcasts, meetings, lectures), while the small model loads orders of magnitude faster. The large model's advantage lies in noisy environments, dialectal speech, and unclear articulation. The small model is used by default.
 
-### 下载 Gemma 翻译模型
+### Downloading the Gemma Translation Model
 
 ```bash
 pip install huggingface_hub
 huggingface-cli download unsloth/gemma-3-4b-it-GGUF gemma-3-4b-it-Q4_K_M.gguf --local-dir gemma-3-4b-it-Q4_K_M
 ```
 
-### 推送模型到手机
+### Pushing Models to the Device
 
-PowerShell（Windows）：
+PowerShell (Windows):
 
 ```powershell
-$adb = "C:\Users\你的用户名\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+$adb = "C:\Users\YourUsername\AppData\Local\Android\Sdk\platform-tools\adb.exe"
 $dest = "/sdcard/Android/data/com.bohanli.ruzhtranslator/files/models"
 
-& $adb push "D:\你的路径\vosk-model-ru-0.42" "$dest/vosk-model-ru-0.42/"
-& $adb push "D:\你的路径\vosk-recasepunc-ru-0.22" "$dest/vosk-recasepunc-ru-0.22/"
-& $adb push "D:\你的路径\gemma-3-4b-it-Q4_K_M" "$dest/gemma-3-4b-it-Q4_K_M/"
+& $adb push "D:\YourPath\vosk-model-ru-0.42" "$dest/vosk-model-ru-0.42/"
+& $adb push "D:\YourPath\vosk-recasepunc-ru-0.22" "$dest/vosk-recasepunc-ru-0.22/"
+& $adb push "D:\YourPath\gemma-3-4b-it-Q4_K_M" "$dest/gemma-3-4b-it-Q4_K_M/"
 ```
 
-## 编译与部署
+## Building and Deployment
 
-1. Android Studio 打开项目
-2. 确保安装 NDK（SDK Manager → SDK Tools → NDK）
-3. **Build Variants 选择 `release`**（release 编译优化对 llama.cpp 至关重要，debug 模式会慢 25-30 倍）
-4. USB 连接手机，开启 USB 调试
-5. 点击绿色运行按钮
-6. 首次编译会编译 llama.cpp（约 5-10 分钟），后续增量编译很快
+1. Open the project in Android Studio
+2. Ensure the NDK is installed (SDK Manager → SDK Tools → NDK)
+3. **Set Build Variant to `release`** (release-mode compiler optimizations are critical for llama.cpp; debug builds are approximately 25–30x slower)
+4. Connect the phone via USB with USB debugging enabled
+5. Click the Run button
+6. The first build compiles llama.cpp (~5–10 minutes); subsequent incremental builds are fast
 
-> **注意**：AGP 9.1.0 内置 Kotlin，不需要额外添加 kotlin-android 插件。`gradle.properties` 中需要 `android.disallowKotlinSourceSets=false` 以支持 KSP。
+> **Note**: AGP 9.1.0 bundles Kotlin, so no separate kotlin-android plugin is required. `gradle.properties` must include `android.disallowKotlinSourceSets=false` to support KSP.
 
-## 项目结构
+## Project Structure
 
 ```
 app/src/main/
   cpp/
-    llama_jni.cpp               # JNI 桥接层（llama.cpp ↔ Kotlin）
-    CMakeLists.txt              # CMake 构建配置（OpenCL ON）
-    llama.cpp/                  # llama.cpp 子模块（git submodule）
-    cmake/                      # 自定义 FindOpenCL / FindPython3
-    OpenCL-Headers/             # KhronosGroup OpenCL 头文件
+    llama_jni.cpp               # JNI bridge (llama.cpp ↔ Kotlin)
+    CMakeLists.txt              # CMake build configuration (OpenCL ON)
+    llama.cpp/                  # llama.cpp submodule (git submodule)
+    cmake/                      # Custom FindOpenCL / FindPython3
+    OpenCL-Headers/             # KhronosGroup OpenCL headers
   java/.../
-    MainActivity.kt             # 主界面 + 管线调度 + 彩色对照 + 会话保存
+    MainActivity.kt             # Main UI + pipeline orchestration + pause/resume + settings popup + ASR switching
     asr/
-      VoskAsrManager.kt         # Vosk 语音识别封装
-      RecasepuncProcessor.kt    # ONNX 标点/大小写恢复
+      VoskAsrManager.kt         # Vosk speech recognition wrapper
+      RecasepuncProcessor.kt    # ONNX punctuation & capitalization restoration
     core/
-      ModelManager.kt           # 模型路径管理
-      AppStatus.kt              # UI 状态定义
+      ModelManager.kt           # Model path management
+      AppStatus.kt              # UI state definitions
     segmentation/
-      SentenceSegmenter.kt      # 5 规则智能断句（已注释，保留备用）
+      SentenceSegmenter.kt      # 5-rule sentence segmenter (commented out, retained for reference)
     translation/
-      GemmaTranslator.kt        # Gemma 翻译器 Kotlin 封装
-      TranslationQueue.kt       # 后台翻译队列（保序 + generation counter）
+      GemmaTranslator.kt        # Gemma translator Kotlin wrapper
+      TranslationQueue.kt       # Background translation queue (ordered + generation counter)
     history/
-      TranslationRecord.kt      # Room 实体（双标志位：isHistory + isFavorite）
-      TranslationDao.kt         # Room DAO（历史/收藏分离查询 + 软删除）
-      AppDatabase.kt            # Room 数据库单例
-      HistoryAdapter.kt         # RecyclerView 适配器（星标 + 多选）
-      HistoryActivity.kt        # 历史/收藏管理界面
+      TranslationRecord.kt      # Room entity (dual flags: isHistory + isFavorite)
+      TranslationDao.kt         # Room DAO (history/favorites separate queries + soft delete)
+      AppDatabase.kt            # Room database singleton
+      HistoryAdapter.kt         # RecyclerView adapter (star toggle + multi-select)
+      HistoryActivity.kt        # History & favorites management screen
+    settings/
+      SettingsActivity.kt       # Settings page scaffold (future model management entry point)
   res/layout/
-    activity_main.xml           # 主界面布局（深色主题）
-    activity_history.xml        # 历史/收藏界面布局
-    item_history.xml            # 历史条目卡片布局
-    spinner_item.xml            # 深色主题 Spinner 收起样式
-    spinner_dropdown_item.xml   # 深色主题 Spinner 下拉样式
+    activity_main.xml           # Main screen layout (dark theme)
+    activity_history.xml        # History & favorites screen layout
+    activity_settings.xml       # Settings screen layout
+    item_history.xml            # History entry card layout
+    spinner_item.xml            # Dark-theme Spinner collapsed style
+    spinner_dropdown_item.xml   # Dark-theme Spinner dropdown style
   res/drawable/
-    bg_circle_button*.xml       # 圆形按钮背景（开始/停止状态）
-    ic_*.xml                    # 图标：播放、停止、箭头、历史、星标、导出、复制、删除、多选
+    bg_circle_button*.xml       # Circular button backgrounds (start/stop states)
+    ic_*.xml                    # Icons: play, stop, arrow, history, star, export, copy, delete, multi-select
 ```
 
-## 核心技术细节
+## Technical Details
 
-- **翻译引擎**：llama.cpp 静态链接，通过 git submodule 集成，CMake add_subdirectory 编译
-- **量化格式**：Gemma 3 4B-IT Q4_K_M（约 2.5GB，4-bit 量化）
-- **OpenCL GPU 加速**（v2.6+）：llama.cpp 的 `GGML_OPENCL` 后端，Adreno 830 专用优化 kernel，生成速度 +40%，发热大幅降低
-- **KV Cache 前缀复用**：固定 prompt 前缀（翻译指令部分）在模型加载时预先解码并保存 KV 缓存快照，每次翻译调用时恢复快照而非重新解码，节省约 300-500ms/次
-- **流式输出**：翻译生成过程中每 2 个 token 通过 JNI 回调实时推送到 UI，打字机效果逐步显示翻译结果
-- **分段策略**：Vosk 原生 VAD 分段 + model.conf 的 `min-utterance-length=2.5` 参数优化
-- **翻译历史**（v3.0）：Room 数据库，双标志位设计（`isHistory`/`isFavorite`），支持独立管理、筛选、排序、批量操作、导出
-- **翻译队列 generation counter**：停止/重启监听时递增 generation，丢弃旧队列中残留的翻译结果，保证色块颜色匹配
-- **线程配置**：6 线程 + n_batch=512（prompt 批处理加速）
-- **JNI 命名**：包名中下划线 `ruzhtranslator` → JNI 中 `ruzhtranslator`
-- **Prompt 模板**：`<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
+- **Translation engine**: llama.cpp statically linked, integrated via git submodule, compiled through CMake `add_subdirectory`
+- **Quantization format**: Gemma 3 4B-IT Q4_K_M (~2.5 GB, 4-bit quantization)
+- **OpenCL GPU acceleration** (v2.6+): llama.cpp `GGML_OPENCL` backend with Adreno 830 optimized kernels; +40% generation speed with substantially reduced thermal output
+- **KV cache prefix reuse**: The fixed prompt prefix (translation instructions) is pre-decoded at model load time and the KV cache state is saved as a snapshot; each translation call restores the snapshot instead of re-decoding, saving approximately 300–500 ms per call
+- **Streaming output**: During translation generation, every 2 tokens are pushed to the UI in real time via JNI callback, producing a typewriter effect
+- **Segmentation strategy**: Vosk native VAD segmentation with `min-utterance-length=2.5` parameter in model.conf
+- **Translation history** (v3.0): Room database with dual-flag design (`isHistory`/`isFavorite`) supporting independent management, filtering, sorting, batch operations, and export
+- **Pause/resume** (v3.1): When paused, ASR stops recording and the translation queue suspends after completing the current item (`Channel<Unit>` semaphore); the session is preserved and resumes seamlessly
+- **Runtime ASR model switching** (v3.1): Switch between the large model (1.8 GB) and small model (50 MB) via the settings popup; selection is persisted to SharedPreferences
+- **Parallel model loading** (v3.1): Vosk, Recasepunc, and Gemma are initialized concurrently using `async(Dispatchers.IO)`
+- **Translation queue generation counter**: The generation counter increments on stop/restart, discarding stale translation results from the previous queue to ensure correct color-segment alignment
+- **Thread configuration**: 6 threads + n_batch=512 (prompt batch processing acceleration)
+- **JNI naming**: Package `com.bohanli.ruzhtranslator` maps to `com_bohanli_ruzhtranslator` in JNI function signatures
+- **Prompt template**: `<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
 
-## 性能数据
+## Performance Benchmarks
 
-骁龙 8 Elite（16GB RAM）实测：
+Measured on Snapdragon 8 Elite (16 GB RAM):
 
-| 指标 | 数值 |
-|------|------|
-| Vosk 模型加载（小模型） | <1 秒 |
-| Gemma 模型加载 | ~1-2 秒 |
-| KV Cache 前缀预计算 | ~5 秒（仅加载时一次） |
-| Prompt 处理（含前缀复用） | 仅需解码后缀，~550ms-1.7s |
-| 翻译生成（OpenCL GPU） | ~11-14 tok/s |
-| 翻译生成（纯 CPU，参考） | ~8-10 tok/s |
-| 单段翻译延迟 | 1-3 秒（视输入长度） |
-| 语音识别延迟 | ~1 秒 |
+| Metric | Value |
+|--------|-------|
+| Vosk model loading (small) | < 1 s |
+| Gemma model loading | ~1–2 s |
+| KV cache prefix pre-computation | ~5 s (one-time at load) |
+| Prompt processing (with prefix reuse) | Suffix decoding only, ~550 ms–1.7 s |
+| Translation generation (OpenCL GPU) | ~11–14 tok/s |
+| Translation generation (CPU only, reference) | ~8–10 tok/s |
+| Per-segment translation latency | 1–3 s (depending on input length) |
+| Speech recognition latency | ~1 s |
 
-> **重要**：必须使用 Release 构建。Debug 构建 llama.cpp 无编译优化，速度仅为 Release 的 1/30。
+> **Important**: Release builds are required. Debug builds disable compiler optimizations for llama.cpp, resulting in approximately 1/30th the speed of release builds.
 
-## 已知限制
+## Known Limitations
 
-- **长时间运行发热**：v2.6 OpenCL GPU 加速后发热大幅改善，但极端长时间运行仍可能降频
-- **Vosk 原生分段较长**：依赖 Vosk VAD 分段，单段文本可能较长（60-90 tokens），翻译耗时随之增加
-- Gemma 4B 极偶尔会在中文翻译中输出其他语言（英语/日语，约每 10-15 段出现一次）
-- Vosk 小模型偶尔在说话人磕巴时将两个短词错误合并为一个词
-- 标点恢复模型对语音片段效果有限（大小写恢复正常工作，标点预测较弱）
-- Vulkan GPU 后端不兼容 Adreno（ErrorDeviceLost），已改用 OpenCL
+- **Thermal throttling under prolonged use**: OpenCL GPU acceleration (v2.6) substantially reduces heat generation, but extended continuous operation may still trigger frequency scaling
+- **Long Vosk native segments**: Segmentation relies on Vosk VAD, and individual segments can be lengthy (60–90 tokens), increasing per-segment translation time
+- Gemma 4B occasionally produces output in other languages (English/Japanese, roughly once every 10–15 segments) within Chinese translations
+- The small Vosk model occasionally merges two short words into one when the speaker stutters
+- The punctuation restoration model has limited effectiveness on speech fragments (capitalization restoration works correctly; punctuation prediction is weaker)
+- Vulkan GPU backend is incompatible with Adreno (ErrorDeviceLost); OpenCL is used instead
 
-## 开源协议
+## Licenses
 
-本项目使用以下开源组件：
+This project uses the following open-source components:
 - [Vosk](https://alphacephei.com/vosk/) — Apache 2.0
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) — MIT
 - [Gemma](https://ai.google.dev/gemma) — Gemma Terms of Use
 - [ONNX Runtime](https://github.com/microsoft/onnxruntime) — MIT
 - [Room](https://developer.android.com/jetpack/androidx/releases/room) — Apache 2.0
 
-## 版本历史
+## Version History
 
-- **v3.0 — 翻译历史 + 收藏 + UI 大改版**：
-  - 新增 Room 数据库翻译历史系统，双标志位设计（`isHistory`/`isFavorite`）支持历史和收藏独立管理
-  - 新增 HistoryActivity：底部双 tab（收藏/历史），时间筛选、排序、批量清理，多选操作（删除/导出/复制/收藏），详情对话框，条目重命名
-  - 每次开始新会话时自动保存上一次翻译记录，支持导出为 UTF-8 文本文件到 Download 文件夹
-  - 批量删除和清理操作需二次确认防误操作；未选中条目时操作按钮给出提示
-  - 主界面精简：移除分隔线和文字标签，收藏/历史按钮放大至 40dp，与开始按钮并列
-  - 彩色段落从 10 色扩展至 16 色彩虹渐变（无白色）
-  - 智能自动滚动：用户上滚暂停自动滚动，显示"滚动到底部"浮动按钮
-  - 翻译队列 generation counter 解决停止/重启后色块颜色不匹配问题
-  - 深色主题自定义 Spinner 样式（浅色文字 + 深色下拉背景）
-  - 俄语输入区提示语改为俄语 "Ожидание голосового ввода..."
-  - 编译兼容性：AGP 9.1.0 内置 Kotlin + KSP 2.1.0 + Room 2.7.1
-- **v2.6 — OpenCL GPU 加速**：启用 llama.cpp 的 `GGML_OPENCL` 后端，Adreno 830 专用优化 kernel。生成速度从 8-10 tok/s 提升至 11-14 tok/s（+40%），prompt 处理从 700ms-3s 降至 550ms-1.7s，发热大幅改善可持续运行。编译需要 KhronosGroup OpenCL Headers + 设备 libOpenCL.so stub
-- **v2.5 — Vosk 分段调优 + 颜色优化**：通过 model.conf 的 Kaldi endpointer 参数（`min-utterance-length=2.5`）优化分段行为，短句不易误切，长句自然分段；段落颜色改为彩虹渐变序列，相邻段落颜色更协调
-- **v2.4 — 流式输出**：翻译生成时每 2 个 token 实时推送到 UI（JNI 回调），打字机效果逐步显示，视觉响应大幅提升
-- **v2.3 — Vosk 原生分段 + 小模型默认**：移除自定义断句规则和 partial 稳定性确认，改用 Vosk 原生 VAD 分段，段落语义完整性更好；ASR 默认切换至 vosk-model-small-ru-0.22（50MB），加载速度大幅提升，清晰语音场景识别准确率与大模型（1.8GB）几乎无差别
-- **v2.2 — KV Cache 前缀复用 + Partial 稳定性确认**：固定 prompt 前缀预解码并缓存 KV 状态，每次翻译恢复快照而非重新解码（~300-500ms/次）；跟踪 Vosk partial 结果稳定性，前缀词连续多次不变则提前确认送入翻译管线，降低整体延迟
-- **v2.1 — Gemma 4B 升级 + 连词精简**：翻译模型从 Gemma 3 1B 升级至 4B（Q4_K_M），翻译质量显著提升；连词断句列表从 33 个精简至 6 个强句界连词（но/однако/поэтому/хотя/зато/потому），减少碎片化断句
-- **v2.0 — Gemma 翻译引擎 + 彩色对照**：迁移至 llama.cpp + Gemma 3 1B，新增俄语连接词断句、彩色段落对照、停止时保留未定稿文本
-- **v1.0 — 初始版本**：Vosk + NLLB CTranslate2 架构
+- **v3.1 — Pause/Resume + Settings Entry + ASR Model Switching + Parallel Loading**:
+  - Added pause/resume button; when paused, ASR and translation queue suspend without terminating the session, with seamless resumption
+  - Added settings gear button + PopupMenu (settings page entry + ASR model size switching)
+  - ASR model selection persisted to SharedPreferences, automatically loaded on restart
+  - Added SettingsActivity scaffold (model management, default model selection, about) as groundwork for future LLMhub-style extensions
+  - Three-model parallel loading (async + Dispatchers.IO) with real-time loading progress in the status bar
+- **v3.0 — Translation History + Favorites + Major UI Overhaul**:
+  - Added Room database translation history system with dual-flag design (`isHistory`/`isFavorite`) for independent history and favorites management
+  - Added HistoryActivity: bottom dual-tab (Favorites/History), time filtering, sorting, batch cleanup, multi-select operations (delete/export/copy/favorite), detail dialog, entry renaming
+  - Automatic saving of previous translation records when starting a new session; export as UTF-8 text files to the Downloads folder
+  - Batch delete and cleanup operations require confirmation to prevent accidental data loss; action buttons show prompts when no entries are selected
+  - Streamlined main screen: removed dividers and text labels; enlarged favorite/history buttons to 40 dp, aligned with the start button
+  - Color-coded segments expanded from 10 to 16 colors in a rainbow gradient (excluding white)
+  - Smart auto-scroll: auto-scrolling pauses on manual upward scroll, displaying a floating "Scroll to bottom" button
+  - Translation queue generation counter resolves color-segment mismatch after stop/restart
+  - Dark-theme custom Spinner styles (light text + dark dropdown background)
+  - Russian input area placeholder changed to Russian: "Ожидание голосового ввода..."
+  - Build compatibility: AGP 9.1.0 bundled Kotlin + KSP 2.1.0 + Room 2.7.1
+- **v2.6 — OpenCL GPU Acceleration**: Enabled llama.cpp `GGML_OPENCL` backend with Adreno 830 optimized kernels. Generation speed increased from 8–10 tok/s to 11–14 tok/s (+40%), prompt processing reduced from 700 ms–3 s to 550 ms–1.7 s, and thermal performance improved for sustained operation. Build requires KhronosGroup OpenCL Headers + device libOpenCL.so stub
+- **v2.5 — Vosk Segmentation Tuning + Color Optimization**: Optimized segmentation via Kaldi endpointer parameters in model.conf (`min-utterance-length=2.5`); short utterances are less prone to premature splits while long utterances segment naturally. Segment colors changed to a rainbow gradient sequence for better visual distinction between adjacent segments
+- **v2.4 — Streaming Output**: Every 2 tokens are pushed to the UI in real time during translation generation (JNI callback), providing a typewriter effect with substantially improved perceived responsiveness
+- **v2.3 — Vosk Native Segmentation + Small Model Default**: Removed custom sentence segmentation rules and partial-stability confirmation in favor of Vosk native VAD segmentation, yielding better semantic coherence per segment. ASR default switched to vosk-model-small-ru-0.22 (50 MB) with significantly faster loading; recognition accuracy on clear speech is nearly identical to the large model (1.8 GB)
+- **v2.2 — KV Cache Prefix Reuse + Partial Stability Confirmation**: Pre-decoded the fixed prompt prefix and cached the KV state; each translation restores the snapshot instead of re-decoding (~300–500 ms savings per call). Tracked Vosk partial result stability to confirm prefix words that remain unchanged across consecutive frames, feeding them into the translation pipeline early to reduce overall latency
+- **v2.1 — Gemma 4B Upgrade + Conjunction Refinement**: Upgraded translation model from Gemma 3 1B to 4B (Q4_K_M) with significantly improved translation quality. Reduced conjunction-based segmentation list from 33 to 6 strong clause-boundary conjunctions (но/однако/поэтому/хотя/зато/потому) to minimize fragmented segmentation
+- **v2.0 — Gemma Translation Engine + Color-Coded Alignment**: Migrated to llama.cpp + Gemma 3 1B; added Russian conjunction-based segmentation, color-coded parallel segments, and retention of unfinalized text on stop
+- **v1.0 — Initial Release**: Vosk + NLLB CTranslate2 architecture

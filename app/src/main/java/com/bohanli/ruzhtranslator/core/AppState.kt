@@ -5,6 +5,7 @@ sealed class AppStatus {
     object Ready : AppStatus()
     object Listening : AppStatus()
     object Translating : AppStatus()
+    object Paused : AppStatus()
     data class Error(val message: String) : AppStatus()
 
     fun toDisplayString(): String = when (this) {
@@ -12,6 +13,7 @@ sealed class AppStatus {
         Ready -> "[就绪] 点击按钮开始监听"
         Listening -> "[监听] 正在识别俄语..."
         Translating -> "[翻译] 正在翻译..."
+        Paused -> "[暂停] 已暂停，点击继续"
         is Error -> "[错误] $message"
     }
 }

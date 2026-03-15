@@ -27,6 +27,9 @@
         <activity
             android:name=".history.HistoryActivity"
             android:theme="@style/Theme.OfflineRealtimeTranslator" />
+        <activity
+            android:name=".settings.SettingsActivity"
+            android:theme="@style/Theme.OfflineRealtimeTranslator" />
     </application>
 
 </manifest>

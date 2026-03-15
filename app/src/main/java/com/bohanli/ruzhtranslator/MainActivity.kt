@@ -9,7 +9,10 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.util.Log
+import android.view.Gravity
 import android.view.View
+import android.widget.PopupMenu
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -21,22 +24,28 @@ import com.bohanli.ruzhtranslator.databinding.ActivityMainBinding
 import com.bohanli.ruzhtranslator.history.AppDatabase
 import com.bohanli.ruzhtranslator.history.HistoryActivity
 import com.bohanli.ruzhtranslator.history.TranslationRecord
+import com.bohanli.ruzhtranslator.settings.SettingsActivity
 import com.bohanli.ruzhtranslator.translation.GemmaTranslator
 import com.bohanli.ruzhtranslator.translation.TranslationQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        private const val MODEL_ASR        = "vosk-model-small-ru-0.22"
-        private const val MODEL_RECASEPUNC = "vosk-recasepunc-ru-0.22"
-        private const val MODEL_GEMMA      = "gemma-3-4b-it-Q4_K_M"
+        private const val MODEL_ASR_SMALL   = "vosk-model-small-ru-0.22"
+        private const val MODEL_ASR_LARGE   = "vosk-model-ru-0.42"
+        private const val MODEL_RECASEPUNC  = "vosk-recasepunc-ru-0.22"
+        private const val MODEL_GEMMA       = "gemma-3-4b-it-Q4_K_M"
+        private const val PREF_ASR_MODEL    = "asr_model"
 
         // 16 bright rainbow colors for dark backgrounds, no white
         private val SEGMENT_COLORS = intArrayOf(
@@ -69,7 +78,11 @@ class MainActivity : AppCompatActivity() {
     private var translationQueue: TranslationQueue? = null
 
     @Volatile private var isListening = false
+    @Volatile private var isPaused = false
     private var lastPartial = ""
+
+    // Current ASR model name
+    private var currentAsrModel = MODEL_ASR_SMALL
 
     // Segment lists for colored display
     private val russianSegments = mutableListOf<String>()
@@ -97,6 +110,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Load ASR model preference
+        currentAsrModel = getPreferences(MODE_PRIVATE)
+            .getString(PREF_ASR_MODEL, MODEL_ASR_SMALL) ?: MODEL_ASR_SMALL
+
         setupUi()
         loadModels()
     }
@@ -106,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         // Save synchronously before canceling scope
         saveSessionToHistorySync()
         isListening = false
+        isPaused = false
         voskAsr?.release()
         translationQueue?.shutdown()
         gemmaTranslator?.destroy()
@@ -122,7 +141,20 @@ class MainActivity : AppCompatActivity() {
         binding.btnStartStop.isEnabled = false
         binding.btnStartStop.alpha = 0.4f
         binding.btnStartStop.setOnClickListener {
-            if (isListening) stopListening() else requestMic()
+            if (isPaused) {
+                // If paused, stop fully
+                resumeFromPause()
+                stopListening()
+            } else if (isListening) {
+                stopListening()
+            } else {
+                requestMic()
+            }
+        }
+
+        // Pause/Resume button
+        binding.btnPauseResume.setOnClickListener {
+            if (isPaused) resumeFromPause() else pauseListening()
         }
 
         // History button → open history tab
@@ -136,6 +168,9 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, HistoryActivity::class.java)
                 .putExtra("tab", 1))
         }
+
+        // Settings button → popup menu
+        binding.btnSettings.setOnClickListener { showSettingsPopup(it) }
 
         // Scroll-to-bottom buttons
         binding.btnScrollBottomRu.setOnClickListener {
@@ -178,21 +213,65 @@ class MainActivity : AppCompatActivity() {
     }
 
     // -------------------------------------------------------------------------
-    // Model loading
+    // Settings popup
     // -------------------------------------------------------------------------
 
-    private fun loadModels() {
+    private fun showSettingsPopup(anchor: View) {
+        val popup = PopupMenu(this, anchor, Gravity.TOP)
+        popup.menu.add(0, 1, 0, getString(R.string.settings_title))
+
+        val isLargeModel = currentAsrModel == MODEL_ASR_LARGE
+        val switchLabel = if (isLargeModel) getString(R.string.switch_small_model)
+            else getString(R.string.switch_large_model)
+        popup.menu.add(0, 2, 1, switchLabel)
+
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> {
+                    startActivity(Intent(this, SettingsActivity::class.java))
+                    true
+                }
+                2 -> {
+                    switchAsrModel()
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun switchAsrModel() {
+        val newModel = if (currentAsrModel == MODEL_ASR_SMALL) MODEL_ASR_LARGE else MODEL_ASR_SMALL
+
+        // Stop listening if active
+        if (isListening || isPaused) {
+            if (isPaused) resumeFromPause()
+            stopListening()
+        }
+
+        // Disable button during reload
+        binding.btnStartStop.isEnabled = false
+        binding.btnStartStop.alpha = 0.4f
+
         mainScope.launch {
             try {
-                // ---- Vosk ASR (required) ----
-                updateStatus(AppStatus.Loading("加载语音识别模型 ($MODEL_ASR)..."))
+                updateStatus(AppStatus.Loading("切换模型: $newModel..."))
+
+                // Release old Vosk
+                voskAsr?.release()
+                voskAsr = null
+
+                // Load new model
                 val asrDir = withContext(Dispatchers.IO) {
-                    ModelManager.getModelDir(this@MainActivity, MODEL_ASR)
-                } ?: throw IllegalStateException(
-                    "找不到 Vosk ASR 模型。\n" +
-                    "请将 $MODEL_ASR/ 放至:\n" +
-                    ModelManager.getExternalModelDir(this@MainActivity)
-                )
+                    ModelManager.getModelDir(this@MainActivity, newModel)
+                }
+                if (asrDir == null) {
+                    updateStatus(AppStatus.Error("找不到模型: $newModel"))
+                    // Revert to old model
+                    reloadVoskAsr(currentAsrModel)
+                    return@launch
+                }
 
                 val asr = VoskAsrManager(
                     modelPath     = asrDir.absolutePath,
@@ -200,44 +279,126 @@ class MainActivity : AppCompatActivity() {
                     onFinalResult = { text -> onVoskFinal(text) },
                     onError       = { msg  -> updateStatus(AppStatus.Error(msg)) }
                 )
-                updateStatus(AppStatus.Loading("初始化语音识别引擎..."))
                 asr.initialize()
                 voskAsr = asr
 
-                // ---- Recasepunc (optional) ----
-                updateStatus(AppStatus.Loading("加载标点恢复模型..."))
-                val recasepuncDir = withContext(Dispatchers.IO) {
-                    ModelManager.getModelDir(this@MainActivity, MODEL_RECASEPUNC)
-                }
-                if (recasepuncDir == null) Log.w(TAG, "Recasepunc model not found – punctuation skipped")
-                recasepunc = withContext(Dispatchers.IO) {
-                    RecasepuncProcessor(recasepuncDir)
+                currentAsrModel = newModel
+                getPreferences(MODE_PRIVATE).edit()
+                    .putString(PREF_ASR_MODEL, newModel)
+                    .apply()
+
+                binding.btnStartStop.isEnabled = true
+                binding.btnStartStop.alpha = 0.75f
+                updateStatus(AppStatus.Ready)
+                Toast.makeText(this@MainActivity,
+                    getString(R.string.model_switched, newModel), Toast.LENGTH_SHORT).show()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Model switch failed", e)
+                updateStatus(AppStatus.Error("模型切换失败: ${e.message}"))
+                // Try to reload old model
+                reloadVoskAsr(currentAsrModel)
+            }
+        }
+    }
+
+    private suspend fun reloadVoskAsr(model: String) {
+        try {
+            val dir = withContext(Dispatchers.IO) {
+                ModelManager.getModelDir(this@MainActivity, model)
+            } ?: return
+            val asr = VoskAsrManager(
+                modelPath     = dir.absolutePath,
+                onPartial     = { text -> onVoskPartial(text) },
+                onFinalResult = { text -> onVoskFinal(text) },
+                onError       = { msg  -> updateStatus(AppStatus.Error(msg)) }
+            )
+            asr.initialize()
+            voskAsr = asr
+            binding.btnStartStop.isEnabled = true
+            binding.btnStartStop.alpha = 0.75f
+            updateStatus(AppStatus.Ready)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to reload ASR", e)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Model loading (parallel)
+    // -------------------------------------------------------------------------
+
+    private fun loadModels() {
+        mainScope.launch {
+            try {
+                updateStatus(AppStatus.Loading("加载模型..."))
+                val loadedCount = AtomicInteger(0)
+
+                coroutineScope {
+                    // Vosk ASR
+                    val asrDeferred = async(Dispatchers.IO) {
+                        val dir = ModelManager.getModelDir(this@MainActivity, currentAsrModel)
+                            ?: throw IllegalStateException(
+                                "找不到 Vosk ASR 模型。\n请将 $currentAsrModel/ 放至:\n" +
+                                ModelManager.getExternalModelDir(this@MainActivity)
+                            )
+                        val asr = VoskAsrManager(
+                            modelPath     = dir.absolutePath,
+                            onPartial     = { text -> onVoskPartial(text) },
+                            onFinalResult = { text -> onVoskFinal(text) },
+                            onError       = { msg  -> updateStatus(AppStatus.Error(msg)) }
+                        )
+                        asr.initialize()
+                        val n = loadedCount.incrementAndGet()
+                        withContext(Dispatchers.Main) {
+                            updateStatus(AppStatus.Loading("加载模型 ($n/3)..."))
+                        }
+                        asr
+                    }
+
+                    // Recasepunc
+                    val recasepuncDeferred = async(Dispatchers.IO) {
+                        val dir = ModelManager.getModelDir(this@MainActivity, MODEL_RECASEPUNC)
+                        if (dir == null) Log.w(TAG, "Recasepunc model not found – punctuation skipped")
+                        val rcp = RecasepuncProcessor(dir)
+                        val n = loadedCount.incrementAndGet()
+                        withContext(Dispatchers.Main) {
+                            updateStatus(AppStatus.Loading("加载模型 ($n/3)..."))
+                        }
+                        rcp
+                    }
+
+                    // Gemma translator
+                    val gemmaDeferred = async(Dispatchers.IO) {
+                        val dir = ModelManager.getModelDir(this@MainActivity, MODEL_GEMMA)
+                        if (dir == null) Log.w(TAG, "Gemma model not found")
+                        val translator = GemmaTranslator()
+                        if (dir != null) translator.initialize(dir)
+                        val n = loadedCount.incrementAndGet()
+                        withContext(Dispatchers.Main) {
+                            updateStatus(AppStatus.Loading("加载模型 ($n/3)..."))
+                        }
+                        translator
+                    }
+
+                    voskAsr = asrDeferred.await()
+                    recasepunc = recasepuncDeferred.await()
+                    gemmaTranslator = gemmaDeferred.await()
                 }
 
-                // ---- Gemma translator ----
-                updateStatus(AppStatus.Loading("加载翻译引擎 (Gemma)..."))
-                val gemmaDir = withContext(Dispatchers.IO) {
-                    ModelManager.getModelDir(this@MainActivity, MODEL_GEMMA)
-                }
-                if (gemmaDir == null) Log.w(TAG, "Gemma model not found")
-
-                val translator = GemmaTranslator()
-                if (gemmaDir != null) translator.initialize(gemmaDir)
-                gemmaTranslator = translator
-
-                // ---- Translation queue ----
+                // Translation queue (needs gemmaTranslator ready)
                 translationQueue = TranslationQueue(
-                    translator    = translator,
+                    translator    = gemmaTranslator!!,
                     onResult      = { result -> finalizeChinese(result) },
                     onStreamToken = { token -> appendStreamToken(token) },
                     onStreamStart = { startChineseStream() },
                     onBusyChanged = { busy ->
                         if (busy) updateStatus(AppStatus.Translating)
                         else if (isListening) updateStatus(AppStatus.Listening)
+                        else if (isPaused) updateStatus(AppStatus.Paused)
                     }
                 )
 
-                // Enable button and auto-start listening
+                // Enable button and auto-start
                 binding.btnStartStop.isEnabled = true
                 binding.btnStartStop.alpha = 0.75f
                 requestMic()
@@ -283,7 +444,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // -------------------------------------------------------------------------
-    // Start / Stop
+    // Start / Stop / Pause / Resume
     // -------------------------------------------------------------------------
 
     private fun requestMic() {
@@ -302,15 +463,21 @@ class MainActivity : AppCompatActivity() {
         // Save previous session before starting a new one
         saveSessionToHistory()
         isListening = true
+        isPaused = false
         asr.startListening()
         updateStatus(AppStatus.Listening)
         // Switch to red stop icon
         binding.btnStartStop.setImageResource(R.drawable.ic_stop_square)
         binding.btnStartStop.setBackgroundResource(R.drawable.bg_circle_button_stop)
+        // Show pause button
+        binding.btnPauseResume.visibility = View.VISIBLE
+        binding.btnPauseResume.setImageResource(R.drawable.ic_pause)
+        binding.btnPauseResume.setBackgroundResource(R.drawable.bg_circle_button_pause)
     }
 
     private fun stopListening() {
         isListening = false
+        isPaused = false
         voskAsr?.stopListening()
 
         if (lastPartial.isNotBlank()) {
@@ -325,6 +492,42 @@ class MainActivity : AppCompatActivity() {
         // Switch to green play icon
         binding.btnStartStop.setImageResource(R.drawable.ic_play_arrow)
         binding.btnStartStop.setBackgroundResource(R.drawable.bg_circle_button_start)
+        // Hide pause button
+        binding.btnPauseResume.visibility = View.GONE
+    }
+
+    private fun pauseListening() {
+        isPaused = true
+        voskAsr?.stopListening()
+
+        // Flush any pending partial to queue
+        if (lastPartial.isNotBlank()) {
+            val text = lastPartial
+            lastPartial = ""
+            appendRussianSegment(text)
+            translationQueue?.submit(text)
+            updateRussianDisplay()
+        }
+
+        // Pause queue (finishes current translation, then waits)
+        translationQueue?.pause()
+
+        updateStatus(AppStatus.Paused)
+        // Change pause button to resume (play arrow with amber bg)
+        binding.btnPauseResume.setImageResource(R.drawable.ic_play_arrow)
+        binding.btnPauseResume.setBackgroundResource(R.drawable.bg_circle_button_start)
+    }
+
+    private fun resumeFromPause() {
+        isPaused = false
+        translationQueue?.resume()
+        voskAsr?.startListening()
+        isListening = true
+
+        updateStatus(AppStatus.Listening)
+        // Change back to pause icon
+        binding.btnPauseResume.setImageResource(R.drawable.ic_pause)
+        binding.btnPauseResume.setBackgroundResource(R.drawable.bg_circle_button_pause)
     }
 
     // -------------------------------------------------------------------------
