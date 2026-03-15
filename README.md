@@ -35,9 +35,12 @@
 
 | 模型 | 大小 | 用途 | 下载地址 |
 |------|------|------|----------|
-| vosk-model-ru-0.42 | ~1.8GB | 俄语语音识别 | [Vosk Models](https://alphacephei.com/vosk/models) |
+| vosk-model-small-ru-0.22 | ~50MB | 俄语语音识别（默认，轻量） | [Vosk Models](https://alphacephei.com/vosk/models) |
+| vosk-model-ru-0.42 | ~1.8GB | 俄语语音识别（可选，大模型） | [Vosk Models](https://alphacephei.com/vosk/models) |
 | vosk-recasepunc-ru-0.22 | ~680MB | 标点/大小写恢复 | [Vosk Models](https://alphacephei.com/vosk/models) |
 | gemma-3-4b-it-Q4_K_M | ~2.5GB | 俄→中翻译引擎 | 见下方 |
+
+> **ASR 模型对比**：经实测，小模型（50MB）与大模型（1.8GB）在清晰语音（新闻、会议、演讲）场景下识别准确率几乎无差别，但加载速度快数十倍。大模型优势在噪音环境/方言/口齿不清场景。默认使用小模型，后续版本将支持 UI 一键切换。
 
 ### 下载 Gemma 翻译模型
 
@@ -98,9 +101,8 @@ app/src/main/
 - **翻译引擎**：llama.cpp 静态链接，通过 git submodule 集成，CMake add_subdirectory 编译
 - **量化格式**：Gemma 3 4B-IT Q4_K_M（约 2.5GB，4-bit 量化）
 - **KV Cache 前缀复用**：固定 prompt 前缀（翻译指令部分）在模型加载时预先解码并保存 KV 缓存快照，每次翻译调用时恢复快照而非重新解码，节省约 300-500ms/次
-- **Partial 稳定性确认**：跟踪 Vosk partial 结果的前缀稳定性，连续多次回调未变的词提前确认送入翻译管线，减少等待 Vosk final result 的延迟
+- **分段策略**：v2.3 起使用 Vosk 原生语音活动检测（VAD）分段，不再自定义断句规则，段落语义完整性更好
 - **线程配置**：6 线程 + n_batch=512（prompt 批处理加速）
-- **智能断句**：5 级规则——句末标点 > 逗号分割 > 俄语强连词断句（но/однако/поэтому/хотя/зато/потому）> 语音暂停 > 10 词强制分割
 - **JNI 命名**：包名中下划线 `ruzhtranslator` → JNI 中 `ruzhtranslator`
 - **Prompt 模板**：`<start_of_turn>user\nTranslate...<end_of_turn>\n<start_of_turn>model\n`
 
@@ -122,8 +124,8 @@ app/src/main/
 
 ## 已知限制
 
-- **分段略微细碎**：当前按标点/逗号/连词等规则分段，非语义级分段，偶尔会在不完整的语义处断开
 - **长时间运行发热后速度下降**：手机持续高负载运行后 CPU 降频，翻译速度可能跟不上识别速度
+- **Vosk 原生分段较长**：依赖 Vosk VAD 分段，单段文本可能较长（60-90 tokens），翻译耗时随之增加
 - Gemma 4B 偶尔会在中文翻译中保留个别俄语词（人名、口语词）
 - 标点恢复模型对语音片段效果有限（大小写恢复正常工作，标点预测较弱）
 - 纯 CPU 推理（Adreno GPU Vulkan 计算着色器与 llama.cpp 不兼容，ErrorDeviceLost）
@@ -138,6 +140,7 @@ app/src/main/
 
 ## 版本历史
 
+- **v2.3 — Vosk 原生分段 + 小模型默认**：移除自定义断句规则和 partial 稳定性确认，改用 Vosk 原生 VAD 分段，段落语义完整性更好；ASR 默认切换至 vosk-model-small-ru-0.22（50MB），加载速度大幅提升，清晰语音场景识别准确率与大模型（1.8GB）几乎无差别
 - **v2.2 — KV Cache 前缀复用 + Partial 稳定性确认**：固定 prompt 前缀预解码并缓存 KV 状态，每次翻译恢复快照而非重新解码（~300-500ms/次）；跟踪 Vosk partial 结果稳定性，前缀词连续多次不变则提前确认送入翻译管线，降低整体延迟
 - **v2.1 — Gemma 4B 升级 + 连词精简**：翻译模型从 Gemma 3 1B 升级至 4B（Q4_K_M），翻译质量显著提升；连词断句列表从 33 个精简至 6 个强句界连词（но/однако/поэтому/хотя/зато/потому），减少碎片化断句
 - **v2.0 — Gemma 翻译引擎 + 彩色对照**：迁移至 llama.cpp + Gemma 3 1B，新增俄语连接词断句、彩色段落对照、停止时保留未定稿文本
