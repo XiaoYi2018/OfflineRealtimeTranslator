@@ -4,14 +4,16 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.util.Log
-import android.view.Gravity
 import android.view.View
-import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -24,9 +26,11 @@ import com.bohanli.ruzhtranslator.databinding.ActivityMainBinding
 import com.bohanli.ruzhtranslator.history.AppDatabase
 import com.bohanli.ruzhtranslator.history.HistoryActivity
 import com.bohanli.ruzhtranslator.history.TranslationRecord
+import com.bohanli.ruzhtranslator.settings.AppSettings
 import com.bohanli.ruzhtranslator.settings.SettingsActivity
 import com.bohanli.ruzhtranslator.translation.GemmaTranslator
 import com.bohanli.ruzhtranslator.translation.TranslationQueue
+import com.bohanli.ruzhtranslator.translation.TranslatorHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,17 +39,15 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        private const val MODEL_ASR_SMALL   = "vosk-model-small-ru-0.22"
-        private const val MODEL_ASR_LARGE   = "vosk-model-ru-0.42"
         private const val MODEL_RECASEPUNC  = "vosk-recasepunc-ru-0.22"
         private const val MODEL_GEMMA       = "gemma-3-4b-it-Q4_K_M"
-        private const val PREF_ASR_MODEL    = "asr_model"
 
         // 16 bright rainbow colors for dark backgrounds, no white
         private val SEGMENT_COLORS = intArrayOf(
@@ -81,8 +83,11 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var isPaused = false
     private var lastPartial = ""
 
-    // Current ASR model name
-    private var currentAsrModel = MODEL_ASR_SMALL
+    // Current ASR model name (mirrors AppSettings.asrModel, synced on resume)
+    private var currentAsrModel = AppSettings.ASR_MODEL_SMALL
+
+    // Guard so rapid Settings toggles don't stack parallel reloads
+    private val asrSwitchInFlight = AtomicBoolean(false)
 
     // Segment lists for colored display
     private val russianSegments = mutableListOf<String>()
@@ -102,21 +107,60 @@ class MainActivity : AppCompatActivity() {
         else updateStatus(AppStatus.Error(getString(R.string.permission_denied)))
     }
 
+    // Needed on ROMs (e.g. HyperOS for Pad) whose scoped-storage FUSE hides
+    // adb-shell-written files under /sdcard/Android/data/<pkg>/ from the app
+    // UID: we fall back to /sdcard/Download/translator_models/, which requires
+    // "All files access" on Android 11+.
+    private val allFilesAccessLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { maybeLoadModels() }
+
     // -------------------------------------------------------------------------
     // Lifecycle
     // -------------------------------------------------------------------------
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppSettings.init(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Load ASR model preference
-        currentAsrModel = getPreferences(MODE_PRIVATE)
-            .getString(PREF_ASR_MODEL, MODEL_ASR_SMALL) ?: MODEL_ASR_SMALL
+        currentAsrModel = AppSettings.asrModel
 
         setupUi()
+        maybeLoadModels()
+    }
+
+    private fun maybeLoadModels() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !Environment.isExternalStorageManager()) {
+            updateStatus(AppStatus.Loading("等待授予「所有文件访问权限」..."))
+            val intent = try {
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            } catch (_: Exception) {
+                Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+            }
+            try {
+                allFilesAccessLauncher.launch(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not launch All-files-access settings: ${e.message}")
+                loadModels()
+            }
+            return
+        }
         loadModels()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Sync ASR model if user changed it in Settings while away
+        val pref = AppSettings.asrModel
+        if (pref != currentAsrModel && voskAsr != null) {
+            Log.i(TAG, "ASR model changed in Settings: $currentAsrModel → $pref")
+            switchAsrModel(pref)
+        }
     }
 
     override fun onDestroy() {
@@ -125,6 +169,7 @@ class MainActivity : AppCompatActivity() {
         saveSessionToHistorySync()
         isListening = false
         isPaused = false
+        TranslatorHolder.set(null)
         voskAsr?.release()
         translationQueue?.shutdown()
         gemmaTranslator?.destroy()
@@ -169,8 +214,10 @@ class MainActivity : AppCompatActivity() {
                 .putExtra("tab", 1))
         }
 
-        // Settings button → popup menu
-        binding.btnSettings.setOnClickListener { showSettingsPopup(it) }
+        // Settings button → directly open SettingsActivity (no popup)
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
 
         // Scroll-to-bottom buttons
         binding.btnScrollBottomRu.setOnClickListener {
@@ -213,36 +260,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     // -------------------------------------------------------------------------
-    // Settings popup
+    // ASR model switching (driven from SettingsActivity)
     // -------------------------------------------------------------------------
 
-    private fun showSettingsPopup(anchor: View) {
-        val popup = PopupMenu(this, anchor, Gravity.TOP)
-        popup.menu.add(0, 1, 0, getString(R.string.settings_title))
-
-        val isLargeModel = currentAsrModel == MODEL_ASR_LARGE
-        val switchLabel = if (isLargeModel) getString(R.string.switch_small_model)
-            else getString(R.string.switch_large_model)
-        popup.menu.add(0, 2, 1, switchLabel)
-
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> {
-                    startActivity(Intent(this, SettingsActivity::class.java))
-                    true
-                }
-                2 -> {
-                    switchAsrModel()
-                    true
-                }
-                else -> false
-            }
+    private fun switchAsrModel(newModel: String) {
+        if (newModel == currentAsrModel) return
+        if (!asrSwitchInFlight.compareAndSet(false, true)) {
+            Log.i(TAG, "ASR switch already in flight, ignoring")
+            return
         }
-        popup.show()
-    }
-
-    private fun switchAsrModel() {
-        val newModel = if (currentAsrModel == MODEL_ASR_SMALL) MODEL_ASR_LARGE else MODEL_ASR_SMALL
 
         // Stop listening if active
         if (isListening || isPaused) {
@@ -268,7 +294,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (asrDir == null) {
                     updateStatus(AppStatus.Error("找不到模型: $newModel"))
-                    // Revert to old model
                     reloadVoskAsr(currentAsrModel)
                     return@launch
                 }
@@ -283,9 +308,7 @@ class MainActivity : AppCompatActivity() {
                 voskAsr = asr
 
                 currentAsrModel = newModel
-                getPreferences(MODE_PRIVATE).edit()
-                    .putString(PREF_ASR_MODEL, newModel)
-                    .apply()
+                AppSettings.asrModel = newModel
 
                 binding.btnStartStop.isEnabled = true
                 binding.btnStartStop.alpha = 0.75f
@@ -296,8 +319,9 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Model switch failed", e)
                 updateStatus(AppStatus.Error("模型切换失败: ${e.message}"))
-                // Try to reload old model
                 reloadVoskAsr(currentAsrModel)
+            } finally {
+                asrSwitchInFlight.set(false)
             }
         }
     }
@@ -338,8 +362,9 @@ class MainActivity : AppCompatActivity() {
                     val asrDeferred = async(Dispatchers.IO) {
                         val dir = ModelManager.getModelDir(this@MainActivity, currentAsrModel)
                             ?: throw IllegalStateException(
-                                "找不到 Vosk ASR 模型。\n请将 $currentAsrModel/ 放至:\n" +
-                                ModelManager.getExternalModelDir(this@MainActivity)
+                                "找不到 Vosk ASR 模型 ($currentAsrModel)。请放至任一位置：\n" +
+                                "• ${ModelManager.getPublicFallbackPath()}/$currentAsrModel/\n" +
+                                "• ${ModelManager.getExternalModelDir(this@MainActivity)}/$currentAsrModel/"
                             )
                         val asr = VoskAsrManager(
                             modelPath     = dir.absolutePath,
@@ -384,6 +409,9 @@ class MainActivity : AppCompatActivity() {
                     recasepunc = recasepuncDeferred.await()
                     gemmaTranslator = gemmaDeferred.await()
                 }
+
+                // Publish translator so other components can reuse it without loading a second copy
+                TranslatorHolder.set(gemmaTranslator)
 
                 // Translation queue (needs gemmaTranslator ready)
                 translationQueue = TranslationQueue(

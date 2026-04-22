@@ -31,6 +31,12 @@ struct LlamaCtx {
     // KV cache prefix reuse: save state after decoding the fixed prompt prefix
     std::vector<uint8_t> prefix_state;
     int prefix_n_tokens = 0;  // number of tokens in the prefix (= starting pos for suffix)
+
+    // Per-call timing / token counts, read via JNI accessors
+    long long last_prompt_ms = 0;
+    long long last_gen_ms = 0;
+    int last_prompt_tokens = 0;
+    int last_gen_tokens = 0;
 };
 
 // Fixed prefix — everything before the variable Russian text
@@ -153,6 +159,7 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
         const llama_vocab * vocab = llama_model_get_vocab(lctx->model);
 
         bool using_prefix_cache = !lctx->prefix_state.empty();
+        int n_prompt_tokens_total = 0;
 
         // Clear KV cache
         llama_memory_clear(llama_get_memory(lctx->ctx), true);
@@ -182,6 +189,7 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
             suffix_tokens.resize(n_suffix);
 
             LOGI("Prefix reuse: %d cached tokens + %d suffix tokens", lctx->prefix_n_tokens, n_suffix);
+            n_prompt_tokens_total = lctx->prefix_n_tokens + n_suffix;
 
             // Decode only the suffix, starting at the position after the prefix
             llama_batch batch = llama_batch_get_one(suffix_tokens.data(), n_suffix);
@@ -202,6 +210,7 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
             }
             tokens.resize(n_tokens);
             LOGI("Full prompt tokens: %d (no prefix cache)", n_tokens);
+            n_prompt_tokens_total = n_tokens;
 
             llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
             if (llama_decode(lctx->ctx, batch) != 0) {
@@ -224,8 +233,10 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
         int stream_token_count = 0;
         const int STREAM_EVERY = 2;   // flush to UI every N tokens
         bool leading_ws = true;       // track leading whitespace trimming
+        int n_gen_tokens = 0;
 
         for (int i = 0; i < max_gen; i++) {
+            n_gen_tokens = i;
             llama_token token = llama_sampler_sample(lctx->sampler, lctx->ctx, -1);
 
             // Check EOS
@@ -304,6 +315,11 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeTranslate(
         auto genMs = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
         LOGI("Timing: prompt=%lldms generation=%lldms", (long long)promptMs, (long long)genMs);
 
+        lctx->last_prompt_ms = (long long)promptMs;
+        lctx->last_gen_ms = (long long)genMs;
+        lctx->last_prompt_tokens = n_prompt_tokens_total;
+        lctx->last_gen_tokens = n_gen_tokens;
+
         // Clean up output: trim whitespace
         auto start = output.find_first_not_of(" \t\n\r");
         auto end = output.find_last_not_of(" \t\n\r");
@@ -347,6 +363,34 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeDestroy(
         delete lctx;
     }
     llama_backend_free();
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeLastPromptMs(
+        JNIEnv* env, jobject, jlong jHandle) {
+    auto* lctx = reinterpret_cast<LlamaCtx*>(jHandle);
+    return (lctx) ? (jlong)lctx->last_prompt_ms : 0;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeLastGenMs(
+        JNIEnv* env, jobject, jlong jHandle) {
+    auto* lctx = reinterpret_cast<LlamaCtx*>(jHandle);
+    return (lctx) ? (jlong)lctx->last_gen_ms : 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeLastPromptTokens(
+        JNIEnv* env, jobject, jlong jHandle) {
+    auto* lctx = reinterpret_cast<LlamaCtx*>(jHandle);
+    return (lctx) ? (jint)lctx->last_prompt_tokens : 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeLastGenTokens(
+        JNIEnv* env, jobject, jlong jHandle) {
+    auto* lctx = reinterpret_cast<LlamaCtx*>(jHandle);
+    return (lctx) ? (jint)lctx->last_gen_tokens : 0;
 }
 
 } // extern "C"

@@ -1,17 +1,24 @@
 package com.bohanli.ruzhtranslator.core
 
 import android.content.Context
+import android.os.Build
+import android.os.Environment
 import android.util.Log
 import java.io.File
 
 object ModelManager {
     private const val TAG = "ModelManager"
     private const val MODELS_SUBDIR = "models"
+    const val PUBLIC_FALLBACK_DIRNAME = "translator_models"
 
     /**
      * Returns the ready-to-use model directory, checking in order:
+     *  0. Public shared storage  /sdcard/Download/translator_models/<name>/
+     *     (requires MANAGE_EXTERNAL_STORAGE; used as fallback on ROMs whose
+     *      scoped-storage FUSE hides adb-shell-written files from app UID,
+     *      e.g. HyperOS for Pad where app is not in ext_data_rw group).
      *  1. Internal files dir (previously extracted)
-     *  2. External files dir (manually placed)
+     *  2. External scoped files dir (manually placed)
      *  3. APK assets → extract to internal storage
      *
      * Handles the "extra nesting" case where a zip was extracted as
@@ -19,11 +26,16 @@ object ModelManager {
      * and transparently resolves to the correct inner directory.
      */
     fun getModelDir(context: Context, modelName: String): File? {
+        // Priority 0: public shared storage fallback
+        getPublicFallbackDir()?.let { publicBase ->
+            resolveDir(File(publicBase, modelName))?.let { return it }
+        }
+
         // Priority 1: internal storage (already extracted)
         val internalDir = File(context.filesDir, "$MODELS_SUBDIR/$modelName")
         resolveDir(internalDir)?.let { return it }
 
-        // Priority 2: external files dir
+        // Priority 2: external scoped files dir
         context.getExternalFilesDir(MODELS_SUBDIR)?.let { base ->
             resolveDir(File(base, modelName))?.let { return it }
         }
@@ -70,8 +82,34 @@ object ModelManager {
         return dir
     }
 
+    /**
+     * Public-storage fallback base directory. Returns null if the app does not
+     * hold MANAGE_EXTERNAL_STORAGE on Android 11+, or if external storage is not
+     * mounted. The directory itself need not exist yet — [getModelDir] will
+     * probe [resolveDir] on the concrete model subdir.
+     */
+    fun getPublicFallbackDir(): File? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !Environment.isExternalStorageManager()) {
+            return null
+        }
+        val downloads = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_DOWNLOADS
+        )
+        if (!downloads.isDirectory) return null
+        return File(downloads, PUBLIC_FALLBACK_DIRNAME)
+    }
+
     fun getExternalModelDir(context: Context): String =
         context.getExternalFilesDir(MODELS_SUBDIR)?.absolutePath ?: "(external storage unavailable)"
+
+    /** Absolute path of the public fallback base, even if permission not yet granted. */
+    fun getPublicFallbackPath(): String {
+        val downloads = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_DOWNLOADS
+        )
+        return File(downloads, PUBLIC_FALLBACK_DIRNAME).absolutePath
+    }
 
     private fun extractAssetDir(context: Context, assetPath: String, targetDir: File) {
         targetDir.mkdirs()

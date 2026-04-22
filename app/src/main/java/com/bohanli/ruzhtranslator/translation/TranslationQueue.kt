@@ -1,6 +1,7 @@
 package com.bohanli.ruzhtranslator.translation
 
 import android.util.Log
+import com.bohanli.ruzhtranslator.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -75,11 +76,36 @@ class TranslationQueue(
                     }
                 }
 
-                val result = withContext(Dispatchers.IO) {
+                var result = withContext(Dispatchers.IO) {
                     translator.translate(text)
                 }
 
                 translator.onStreamToken = null
+
+                // Output-language verification + one-shot retry.
+                // Skip if queue has moved on, or feature disabled, or result is an
+                // error marker. Retry does NOT stream to UI (onStreamToken is null).
+                if (AppSettings.driftRetryEnabled &&
+                    generation.get() == currentGen &&
+                    DriftDetector.isLikelyDrift(result)
+                ) {
+                    val firstRatio = DriftDetector.cjkRatio(result)
+                    Log.w(TAG, "Drift detected (cjk=${"%.2f".format(firstRatio)}), retrying once")
+                    try {
+                        val retry = withContext(Dispatchers.IO) {
+                            translator.translate(text)
+                        }
+                        val retryRatio = DriftDetector.cjkRatio(retry)
+                        if (retryRatio > firstRatio && !retry.startsWith("[")) {
+                            Log.i(TAG, "Retry improved cjk ${"%.2f".format(firstRatio)} → ${"%.2f".format(retryRatio)}")
+                            result = retry
+                        } else {
+                            Log.i(TAG, "Retry no improvement (${"%.2f".format(retryRatio)}), keeping original")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Retry failed: ${e.message}, keeping first result")
+                    }
+                }
 
                 // Only deliver result if generation hasn't changed
                 if (generation.get() == currentGen) {

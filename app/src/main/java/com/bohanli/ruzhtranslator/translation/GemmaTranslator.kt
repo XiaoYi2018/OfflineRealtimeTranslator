@@ -31,6 +31,21 @@ class GemmaTranslator {
     private external fun nativeTranslate(handle: Long, text: String): String
     private external fun nativeIsAvailable(handle: Long): Boolean
     private external fun nativeDestroy(handle: Long)
+    private external fun nativeLastPromptMs(handle: Long): Long
+    private external fun nativeLastGenMs(handle: Long): Long
+    private external fun nativeLastPromptTokens(handle: Long): Int
+    private external fun nativeLastGenTokens(handle: Long): Int
+
+    /** Last-call timing snapshot returned by [translateWithMetrics]. */
+    data class TranslationResult(
+        val text: String,
+        val promptMs: Long,
+        val genMs: Long,
+        val promptTokens: Int,
+        val genTokens: Int,
+    ) {
+        val totalMs: Long get() = promptMs + genMs
+    }
 
     /** Called from JNI during generation — forwards token to listener. */
     @Suppress("unused")
@@ -69,6 +84,26 @@ class GemmaTranslator {
         } catch (e: Exception) {
             Log.e(TAG, "Translation exception: ${e.message}")
             "[翻译异常: ${e.message}]"
+        }
+    }
+
+    /** Translate and return timing metrics alongside the result string. */
+    fun translateWithMetrics(text: String): TranslationResult {
+        if (nativeHandle == 0L) {
+            return TranslationResult("[翻译引擎未加载]", 0L, 0L, 0, 0)
+        }
+        return try {
+            val out = nativeTranslate(nativeHandle, text)
+            TranslationResult(
+                text = out,
+                promptMs = nativeLastPromptMs(nativeHandle),
+                genMs = nativeLastGenMs(nativeHandle),
+                promptTokens = nativeLastPromptTokens(nativeHandle),
+                genTokens = nativeLastGenTokens(nativeHandle),
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Translation exception: ${e.message}")
+            TranslationResult("[翻译异常: ${e.message}]", 0L, 0L, 0, 0)
         }
     }
 

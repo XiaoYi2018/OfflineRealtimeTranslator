@@ -61,4 +61,15 @@
         <item>一月前</item>
         <item>一年前</item>
     </string-array>
+
+    <!-- Settings: ASR model selection -->
+    <string name="asr_model_title">语音识别模型</string>
+    <string name="asr_model_desc">切换 Vosk 模型。回主界面后自动生效。</string>
+    <string name="asr_model_small">Vosk Small — 87 MB，快速</string>
+    <string name="asr_model_large">Vosk Large — 3.5 GB，更精准</string>
+    <string name="asr_changed_toast">ASR 模型已切换，返回主界面自动加载</string>
+
+    <!-- Settings: output-language drift mitigation -->
+    <string name="drift_retry_title">翻译漂移检测</string>
+    <string name="drift_retry_desc">译文非中文时自动重试一次</string>
 </resources>
