@@ -44,7 +44,7 @@ Microphone → Vosk ASR (Russian speech recognition)
 
 ## Model Files (Not Included in Repository)
 
-Three models must be manually pushed to the device:
+Three models are required (small Vosk, recasepunc, Gemma); the large Vosk model is optional and recommended only for offline transcription scenarios where translation latency is not a constraint:
 
 | Model | Size | Purpose | Download |
 |-------|------|---------|----------|
@@ -72,9 +72,13 @@ PowerShell (Windows):
 $adb = "C:\Users\YourUsername\AppData\Local\Android\Sdk\platform-tools\adb.exe"
 $dest = "/sdcard/Android/data/com.bohanli.ruzhtranslator/files/models"
 
-& $adb push "D:\YourPath\vosk-model-ru-0.42" "$dest/vosk-model-ru-0.42/"
+# Required models (default configuration matches the paper's evaluation)
+& $adb push "D:\YourPath\vosk-model-small-ru-0.22" "$dest/vosk-model-small-ru-0.22/"
 & $adb push "D:\YourPath\vosk-recasepunc-ru-0.22" "$dest/vosk-recasepunc-ru-0.22/"
 & $adb push "D:\YourPath\gemma-3-4b-it-Q4_K_M" "$dest/gemma-3-4b-it-Q4_K_M/"
+
+# Optional: large Vosk model (only for offline transcription without translation)
+# & $adb push "D:\YourPath\vosk-model-ru-0.42" "$dest/vosk-model-ru-0.42/"
 ```
 
 ## Building and Deployment
@@ -216,7 +220,7 @@ This project uses the following open-source components:
 - **v2.6 — OpenCL GPU Acceleration**: Enabled llama.cpp `GGML_OPENCL` backend with Adreno 830 optimized kernels. Generation speed increased from 8–10 tok/s to 11–14 tok/s (+40%), prompt processing reduced from 700 ms–3 s to 550 ms–1.7 s, and thermal performance improved for sustained operation. Build requires KhronosGroup OpenCL Headers + device libOpenCL.so stub
 - **v2.5 — Vosk Segmentation Tuning + Color Optimization**: Optimized segmentation via Kaldi endpointer parameters in model.conf (`min-utterance-length=2.5`); short utterances are less prone to premature splits while long utterances segment naturally. Segment colors changed to a rainbow gradient sequence for better visual distinction between adjacent segments
 - **v2.4 — Streaming Output**: Every 2 tokens are pushed to the UI in real time during translation generation (JNI callback), providing a typewriter effect with substantially improved perceived responsiveness
-- **v2.3 — Vosk Native Segmentation + Small Model Default**: Removed custom sentence segmentation rules and partial-stability confirmation in favor of Vosk native VAD segmentation, yielding better semantic coherence per segment. ASR default switched to vosk-model-small-ru-0.22 (50 MB) with significantly faster loading; recognition accuracy on clear speech is nearly identical to the large model (1.8 GB)
+- **v2.3 — Vosk Native Segmentation + Small Model Default**: Removed custom sentence segmentation rules and partial-stability confirmation in favor of Vosk native VAD segmentation, yielding better semantic coherence per segment. ASR default switched to vosk-model-small-ru-0.22 (50 MB) with significantly faster loading; recognition accuracy on clear speech was at the time observed to be nearly identical to the large model (1.8 GB) (early informal observation; superseded by the v3.2 FLEURS ru\_ru evaluation, which shows WER 16.59% vs. 6.17% — small remains the default for CPU-contention reasons documented above)
 - **v2.2 — KV Cache Prefix Reuse + Partial Stability Confirmation**: Pre-decoded the fixed prompt prefix and cached the KV state; each translation restores the snapshot instead of re-decoding (~300–500 ms savings per call). Tracked Vosk partial result stability to confirm prefix words that remain unchanged across consecutive frames, feeding them into the translation pipeline early to reduce overall latency
 - **v2.1 — Gemma 4B Upgrade + Conjunction Refinement**: Upgraded translation model from Gemma 3 1B to 4B (Q4_K_M) with significantly improved translation quality. Reduced conjunction-based segmentation list from 33 to 6 strong clause-boundary conjunctions (но/однако/поэтому/хотя/зато/потому) to minimize fragmented segmentation
 - **v2.0 — Gemma Translation Engine + Color-Coded Alignment**: Migrated to llama.cpp + Gemma 3 1B; added Russian conjunction-based segmentation, color-coded parallel segments, and retention of unfinalized text on stop

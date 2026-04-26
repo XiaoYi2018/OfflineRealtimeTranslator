@@ -6,7 +6,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Kotlin wrapper around the llama.cpp JNI bridge for Gemma 3 1B-IT.
+ * Kotlin wrapper around the llama.cpp JNI bridge for Gemma 3 4B-IT.
  * Translates Russian text to Simplified Chinese using prompt-based generation.
  */
 class GemmaTranslator {
