@@ -102,12 +102,12 @@ Attempted parallel loading of Vosk + Recasepunc + Gemma using `async`. Loading w
 
 ### 2.6 Vosk Large vs. Small Model Comparison
 
-| Model | Size | Load time | Accuracy (clear speech) |
-|-------|------|-----------|------------------------|
-| vosk-model-ru-0.42 | ~1.8 GB | 10-15 s | High |
-| vosk-model-small-ru-0.22 | ~50 MB | <1 s | Nearly identical |
+| Model | Size | Load time | WER on FLEURS ru_ru (n=100) | RTF (CPU) |
+|-------|------|-----------|------------------------------|-----------|
+| vosk-model-ru-0.42 | ~1.8 GB | 10-15 s | 6.17% | 0.170 |
+| vosk-model-small-ru-0.22 | ~50 MB | <1 s | 16.59% | 0.098 |
 
-Conclusion: For clear speech scenarios (news, meetings, lectures), the difference is negligible. The large model excels only in noisy, dialectal, or mumbled speech. **Small model is the default since v2.3.**
+Conclusion: On clean speech (FLEURS ru_ru), the large model is roughly 2.7× more accurate than the small model. The small model is selected as the default since v2.3 because running the large model concurrently with Gemma saturates the CPU and stalls the translation queue (see CPU contention issue below); for usage scenarios where CPU is not the bottleneck, the large model is preferred. **Small model is the default since v2.3.**
 
 **⚠ Large model CPU contention issue (confirmed v3.1)**:
 The large model's default decoding parameters (`max-active=7000`, `beam=13.0`, `lattice-beam=6.0`) are far heavier than the small model's (`3000/10.0/2.0`). Even after reducing these parameters to match the small model, the large model's acoustic network itself consumes excessive CPU per `acceptWaveForm()` call. When running concurrently with Gemma (6 threads + OpenCL GPU), the CPU is fully saturated, causing:
@@ -261,8 +261,8 @@ The large ASR model causes translation stalls due to CPU contention with Gemma (
 - Assign Vosk and Gemma to separate thread pools with CPU core affinity
 - Combination of the above
 
-### 4.7 Translation Prompt Optimization (priority: low, pending)
-Gemma occasionally outputs partial English (approximately once every 5-10 segments). A possible mitigation is to reinforce "output Chinese only" in the prompt using Chinese instructions.
+### 4.7 Translation Prompt Optimization (priority: low)
+Gemma occasionally outputs partial English on certain inputs. Mitigated in v3.2 by the output-language verifier (CJK ratio + kana check, single non-streaming retry with higher-CJK-ratio winner). On a controlled set of 171 Russian inputs (clean, ASR-noisy, and targeted adversarial), no drift event was reproduced. Prompt-side reinforcement remains a possible future direction for harder distributional shifts.
 
 ### 4.8 Translation Model Exploration (priority: low)
 - A larger model (Gemma 12B) may improve translation quality, but device memory and inference speed are bottlenecks
@@ -369,7 +369,7 @@ Gemma occasionally outputs partial English (approximately once every 5-10 segmen
   | Prompt processing | ~700 ms-3 s | ~550 ms-1.7 s | Faster |
   | Thermal throttling | Severe, drops to 1.5 tok/s | Significantly reduced, sustained operation possible | Biggest benefit |
 
-- **Known issue**: Gemma 4B occasionally outputs Japanese or English (approximately once every 10-15 segments), a multilingual model hallucination to be addressed via prompt optimization
+- **Known issue (resolved in v3.2)**: Gemma 4B occasionally outputs Japanese or English on certain inputs, a multilingual model hallucination. Resolved by the output-language verifier shipped in v3.2 (CJK ratio + kana check, single non-streaming retry with higher-CJK-ratio winner); no drift event was reproduced on a controlled set of 171 Russian inputs.
 
 ### v3.0 — Translation History + Favorites + Major UI Overhaul
 
