@@ -18,7 +18,7 @@ Microphone → Vosk ASR (Russian speech recognition)
 - **Status bar** (top): Displays the current application state (loading / listening / translating)
 - **Russian recognition area** (upper half, scrollable): Real-time ASR output with finalized text shown in color and buffered text in gray
 - **Chinese translation area** (lower half, scrollable): Streaming typewriter-effect display of translation results, color-matched with corresponding Russian segments
-- **Control bar** (center): Favorite button, History button, Settings button (popup menu), Start/Stop button, Pause/Resume button
+- **Control bar** (center): Favorite button, History button, Settings button, Start/Stop button, Pause/Resume button
 - **Pause functionality**: When paused, ASR and the translation queue are suspended without terminating the current session; seamless resumption upon continue
 - **Settings menu**: Quick switching between large and small ASR models; access to the settings page
 - **Smart auto-scroll**: Auto-scrolling pauses when the user manually scrolls up, displaying a "Scroll to bottom" button
@@ -53,7 +53,7 @@ Three models must be manually pushed to the device:
 | vosk-recasepunc-ru-0.22 | ~680 MB | Punctuation & capitalization restoration | [Vosk Models](https://alphacephei.com/vosk/models) |
 | gemma-3-4b-it-Q4_K_M | ~2.5 GB | RU→ZH translation engine | See below |
 
-> **ASR model comparison**: Empirical testing shows that the small model (50 MB) and the large model (1.8 GB) achieve nearly identical recognition accuracy for clear speech (news broadcasts, meetings, lectures), while the small model loads orders of magnitude faster. The large model's advantage lies in noisy environments, dialectal speech, and unclear articulation. The small model is used by default.
+> **ASR model comparison**: On FLEURS ru\_ru (100 utterances of clean read speech), the small model (50 MB) yields WER 16.59% at RTF 0.098, and the large model (1.8 GB) yields WER 6.17% at RTF 0.170. The large model is about 10 percentage points more accurate on this clean test set, but its decoder is far more CPU-intensive at runtime; under concurrent operation with the Gemma translation engine on a single mobile SoC, the large model starves Gemma of CPU and stalls the translation queue. The small model is therefore used by default; the large model is retained as an option for offline transcription scenarios where translation latency is not a constraint.
 >
 > **⚠ Warning**: Switching to the large ASR model at runtime is **not recommended**. The large model's `acceptWaveForm()` is extremely CPU-intensive (default `max-active=7000`, `beam=13.0`, `lattice-beam=6.0` vs. small model's `3000/10.0/2.0`) and starves the Gemma translation engine of CPU resources, causing translations to stall and the device to overheat. Even after reducing decoding parameters to match the small model, the large model's acoustic network itself consumes far more CPU per frame. Use the small model for normal operation.
 
@@ -99,7 +99,7 @@ app/src/main/
     cmake/                      # Custom FindOpenCL / FindPython3
     OpenCL-Headers/             # KhronosGroup OpenCL headers
   java/.../
-    MainActivity.kt             # Main UI + pipeline orchestration + pause/resume + settings popup + ASR switching
+    MainActivity.kt             # Main UI + pipeline orchestration + pause/resume + settings entry + ASR switching + drift-mitigation toggle wiring
     asr/
       VoskAsrManager.kt         # Vosk speech recognition wrapper
       RecasepuncProcessor.kt    # ONNX punctuation & capitalization restoration
@@ -109,8 +109,10 @@ app/src/main/
     segmentation/
       SentenceSegmenter.kt      # 5-rule sentence segmenter (commented out, retained for reference)
     translation/
-      GemmaTranslator.kt        # Gemma translator Kotlin wrapper
-      TranslationQueue.kt       # Background translation queue (ordered + generation counter)
+      GemmaTranslator.kt        # Gemma translator Kotlin wrapper (with translateWithMetrics() instrumentation)
+      TranslationQueue.kt       # Background translation queue (ordered + generation counter + drift retry)
+      DriftDetector.kt          # Output-language verifier (CJK ratio + Japanese kana early-exit)
+      TranslatorHolder.kt       # Process-wide AtomicReference to the active translator (for downstream reuse)
     history/
       TranslationRecord.kt      # Room entity (dual flags: isHistory + isFavorite)
       TranslationDao.kt         # Room DAO (history/favorites separate queries + soft delete)
@@ -118,7 +120,8 @@ app/src/main/
       HistoryAdapter.kt         # RecyclerView adapter (star toggle + multi-select)
       HistoryActivity.kt        # History & favorites management screen
     settings/
-      SettingsActivity.kt       # Settings page scaffold (future model management entry point)
+      SettingsActivity.kt       # Settings page: ASR model selection (small/large) + drift-mitigation toggle
+      AppSettings.kt            # SharedPreferences-backed singleton (asrModel + driftRetryEnabled)
   res/layout/
     activity_main.xml           # Main screen layout (dark theme)
     activity_history.xml        # History & favorites screen layout
@@ -141,7 +144,7 @@ app/src/main/
 - **Segmentation strategy**: Vosk native VAD segmentation with `min-utterance-length=2.5` parameter in model.conf
 - **Translation history** (v3.0): Room database with dual-flag design (`isHistory`/`isFavorite`) supporting independent management, filtering, sorting, batch operations, and export
 - **Pause/resume** (v3.1): When paused, ASR stops recording and the translation queue suspends after completing the current item (`Channel<Unit>` semaphore); the session is preserved and resumes seamlessly
-- **Runtime ASR model switching** (v3.1): Switch between the large model (1.8 GB) and small model (50 MB) via the settings popup; selection is persisted to SharedPreferences
+- **Runtime ASR model switching** (v3.1, refactored in v3.2): Switch between the large model (1.8 GB) and small model (50 MB) from the settings page; selection is persisted to SharedPreferences and re-applied on the next session
 - **Parallel model loading** (v3.1): Vosk, Recasepunc, and Gemma are initialized concurrently using `async(Dispatchers.IO)`
 - **Translation queue generation counter**: The generation counter increments on stop/restart, discarding stale translation results from the previous queue to ensure correct color-segment alignment
 - **Thread configuration**: 6 threads + n_batch=512 (prompt batch processing acceleration)
@@ -169,7 +172,7 @@ Measured on Snapdragon 8 Elite (16 GB RAM):
 
 - **Thermal throttling under prolonged use**: OpenCL GPU acceleration (v2.6) substantially reduces heat generation, but extended continuous operation may still trigger frequency scaling
 - **Long Vosk native segments**: Segmentation relies on Vosk VAD, and individual segments can be lengthy (60–90 tokens), increasing per-segment translation time
-- Gemma 4B occasionally produces output in other languages (English/Japanese, roughly once every 10–15 segments) within Chinese translations
+- Gemma 4B may occasionally produce output in other languages (English/Japanese) under adversarial or ambiguous input. The application includes an output-language verifier (CJK character-ratio + Japanese kana detection) that triggers a single non-streaming retry on detected drift; the candidate with the higher Chinese character ratio replaces the original. Across 171 controlled inputs (clean Russian, ASR hypotheses on FLEURS, and a hand-written adversarial set of brand names, acronyms, and URLs), no drift event was reproduced; the verifier is retained as a defense-in-depth safety net for distributional shift not covered by this evaluation
 - The small Vosk model occasionally merges two short words into one when the speaker stutters
 - The punctuation restoration model has limited effectiveness on speech fragments (capitalization restoration works correctly; punctuation prediction is weaker)
 - **Large Vosk model causes translation stalls**: The large ASR model (1.8 GB) consumes excessive CPU during real-time recognition, starving the Gemma translation engine and causing queue backlog, device overheating, and effective freezing. Reducing its decoding parameters does not resolve the issue — the acoustic network itself is too heavy for concurrent operation with LLM inference. Use the small model instead
@@ -186,6 +189,12 @@ This project uses the following open-source components:
 
 ## Version History
 
+- **v3.2 — Output-language drift mitigation + Cross-device generalization + Per-call timing instrumentation**:
+  - Added `DriftDetector` (CJK character-ratio + Japanese kana early-exit) and a one-shot non-streaming retry path in `TranslationQueue`; when the first translation pass is flagged, a retry is issued and the candidate with the higher CJK ratio replaces the recorded final translation
+  - Added per-call timing accessors at the JNI layer (`nativeLast{PromptMs,GenMs,PromptTokens,GenTokens}`) and a `translateWithMetrics()` Kotlin wrapper for instrumentation
+  - Added `MANAGE_EXTERNAL_STORAGE` permission and a public-storage fallback path (`/sdcard/Download/translator_models/`) for ROMs whose scoped-storage FUSE hides `/sdcard/Android/data/<pkg>/files/` from the application UID
+  - Refactored the settings UI: the previous popup menu is replaced by a dedicated `SettingsActivity` with ASR-model radio selection and a drift-mitigation toggle; both are persisted via the new `AppSettings` singleton
+  - Removed an unused legacy translator stub
 - **v3.1 — Pause/Resume + Settings Entry + ASR Model Switching + Parallel Loading**:
   - Added pause/resume button; when paused, ASR and translation queue suspend without terminating the session, with seamless resumption
   - Added settings gear button + PopupMenu (settings page entry + ASR model size switching)
