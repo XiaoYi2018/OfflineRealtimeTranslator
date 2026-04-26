@@ -83,6 +83,28 @@ $dest = "/sdcard/Android/data/com.bohanli.ruzhtranslator/files/models"
 
 ## Building and Deployment
 
+### Step 0: Provide OpenCL build dependencies (one-time)
+
+Two binary build dependencies are excluded from the repository (`.gitignore`)
+and must be supplied locally before the first build:
+
+1. **OpenCL-Headers** (Khronos C headers):
+   ```bash
+   git clone https://github.com/KhronosGroup/OpenCL-Headers \
+     app/src/main/cpp/OpenCL-Headers
+   ```
+
+2. **libOpenCL.so** (vendor stub from a target Adreno device):
+   ```bash
+   adb pull /system/vendor/lib64/libOpenCL.so app/src/main/cpp/libOpenCL.so
+   ```
+   This file is the device's OpenCL ICD; CMake links against it at build
+   time, but it is excluded from the APK (see `build.gradle.kts`
+   `packaging.jniLibs.excludes += "**/libOpenCL.so"`) so the runtime loader
+   picks up the device's own implementation.
+
+### Step 1: Build in Android Studio
+
 1. Open the project in Android Studio
 2. Ensure the NDK is installed (SDK Manager → SDK Tools → NDK)
 3. **Set Build Variant to `release`** (release-mode compiler optimizations are critical for llama.cpp; debug builds are approximately 25–30x slower)
@@ -164,10 +186,12 @@ Measured on Snapdragon 8 Elite (16 GB RAM):
 | Vosk model loading (small) | < 1 s |
 | Gemma model loading | ~1–2 s |
 | KV cache prefix pre-computation | ~5 s (one-time at load) |
-| Prompt processing (with prefix reuse) | Suffix decoding only, ~550 ms–1.7 s |
+| Prompt processing (with prefix reuse) | ~0.6–3.0 s depending on segment length (suffix only) |
 | Translation generation (OpenCL GPU) | ~11–14 tok/s |
 | Translation generation (CPU only, reference) | ~8–10 tok/s |
-| Per-segment translation latency | 1–3 s (depending on input length) |
+| Per-segment translation latency, short (≤30 chars) | ~0.9 s (mean) |
+| Per-segment translation latency, medium (~80 chars) | ~2.1 s (mean) |
+| Per-segment translation latency, long (~270 chars) | ~6.1 s (mean) |
 | Speech recognition latency | ~1 s |
 
 > **Important**: Release builds are required. Debug builds disable compiler optimizations for llama.cpp, resulting in approximately 1/30th the speed of release builds.

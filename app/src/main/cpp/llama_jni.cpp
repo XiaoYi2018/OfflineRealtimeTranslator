@@ -2,7 +2,7 @@
  * llama_jni.cpp
  *
  * JNI bridge between GemmaTranslator.kt and llama.cpp.
- * Uses Gemma 3 1B-IT (GGUF) for Russian → Chinese translation.
+ * Uses Gemma 3 4B-IT (GGUF) for Russian → Chinese translation.
  *
  * JNI name mangling for package com.bohanli.ruzhtranslator:
  *   underscores in the package name → _1
@@ -75,7 +75,12 @@ Java_com_bohanli_ruzhtranslator_translation_GemmaTranslator_nativeCreate(
 
         // Load model
         auto model_params = llama_model_default_params();
-        model_params.n_gpu_layers = 0; // CPU only — Adreno Vulkan compute triggers ErrorDeviceLost
+        // GPU acceleration is provided by the GGML_OPENCL backend at the
+        // operator level (mat-mul offload to the device GPU via the platform
+        // OpenCL ICD); n_gpu_layers (CUDA-style layer offload) is unused on
+        // this path. The Vulkan backend was tested but triggers
+        // ErrorDeviceLost on Adreno 830.
+        model_params.n_gpu_layers = 0;
         lctx->model = llama_model_load_from_file(modelPath, model_params);
         if (!lctx->model) {
             LOGE("Failed to load model from %s", modelPath);
